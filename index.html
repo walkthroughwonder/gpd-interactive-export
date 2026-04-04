@@ -79,9 +79,9 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    transition: transform 0.3s ease;
   }
   #sidebar.collapsed {
-    transition: transform 0.3s ease;
     transform: translateX(100%);
     min-width: 0;
     width: 0;
@@ -123,7 +123,7 @@
   }
   body.sidebar-resizing #sidebar {
     pointer-events: none;
-    transition: none !important;
+    transition: none;
   }
   body.sidebar-resizing #sidebar-resize {
     pointer-events: auto;
@@ -909,9 +909,9 @@
     planned:  0x6e5d4c,
     empty:    0x393e44
   };
-  const STATUS_CSS = {
-    complete: '#a9903c', partial: '#638ca6', planned: '#6e5d4c', empty: '#393e44'
-  };
+  const STATUS_CSS = {};
+  for (const [k, v] of Object.entries(STATUS_COLORS))
+    STATUS_CSS[k] = '#' + v.toString(16).padStart(6, '0');
   const STATUS_ICONS = { complete: '✓', partial: '◆', planned: '○', empty: '·' };
 
   // ── Precompute: critical path set, phase-number-to-index, topology depth ──
@@ -992,6 +992,21 @@
   const nodeVelocities = [];
   const ringMeshes = [];
 
+  function addVerificationArc(startFrac, endFrac, arcColor, pos, nodeIndex) {
+    const ringR = nodeRadius + 0.08;
+    const arc = new THREE.RingGeometry(ringR, ringR + 0.04,
+      Math.max(2, Math.round(64 * (endFrac - startFrac))), 1,
+      startFrac * Math.PI * 2, (endFrac - startFrac) * Math.PI * 2);
+    const mat = new THREE.MeshBasicMaterial({
+      color: arcColor, side: THREE.DoubleSide, transparent: true, opacity: 0.9
+    });
+    const m = new THREE.Mesh(arc, mat);
+    m.position.copy(pos);
+    m.userData = { isRing: true, nodeIndex };
+    ringGroup.add(m);
+    ringMeshes.push(m);
+  }
+
   phases.forEach((phase, i) => {
     const pos = dagPosition(i);
     const color = STATUS_COLORS[phase.status] || STATUS_COLORS.empty;
@@ -1008,34 +1023,17 @@
     nodePositions.push(pos.clone());
     nodeVelocities.push(new THREE.Vector3(0, 0, 0));
 
-    // ── Feature 3: Verification ring ──
+    // Verification ring
     const vChecks = phase.verification || [];
     if (vChecks.length > 0) {
       const passed = vChecks.filter(v => v.passed && !v.warning).length;
       const warned = vChecks.filter(v => v.warning).length;
       const failed = vChecks.filter(v => !v.passed && !v.warning).length;
       const total = vChecks.length;
-      const ringR = nodeRadius + 0.08;
-      const segments = 64;
-
-      function addArc(startFrac, endFrac, arcColor) {
-        const arc = new THREE.RingGeometry(ringR, ringR + 0.04,
-          Math.max(2, Math.round(segments * (endFrac - startFrac))), 1,
-          startFrac * Math.PI * 2, (endFrac - startFrac) * Math.PI * 2);
-        const mat = new THREE.MeshBasicMaterial({
-          color: arcColor, side: THREE.DoubleSide, transparent: true, opacity: 0.9
-        });
-        const m = new THREE.Mesh(arc, mat);
-        m.position.copy(pos);
-        m.userData = { isRing: true, nodeIndex: i };
-        ringGroup.add(m);
-        ringMeshes.push(m);
-      }
-
       let cursor = 0;
-      if (passed) { addArc(cursor, cursor + passed / total, 0xa9903c); cursor += passed / total; }
-      if (warned) { addArc(cursor, cursor + warned / total, 0xa99c61); cursor += warned / total; }
-      if (failed) { addArc(cursor, cursor + failed / total, 0xa04639); cursor += failed / total; }
+      if (passed) { addVerificationArc(cursor, cursor + passed / total, 0xa9903c, pos, i); cursor += passed / total; }
+      if (warned) { addVerificationArc(cursor, cursor + warned / total, 0xa99c61, pos, i); cursor += warned / total; }
+      if (failed) { addVerificationArc(cursor, cursor + failed / total, 0xa04639, pos, i); cursor += failed / total; }
     }
 
     // Label sprite
@@ -1093,30 +1091,34 @@
   const REPULSION = 4.0, ATTRACTION = 0.008, DAMPING = 0.85, REST_LENGTH = 3.0;
   let simSteps = 0;
   const MAX_SIM_STEPS = 300;
+  const _diff = new THREE.Vector3();
+  const _center = new THREE.Vector3();
 
   function simulateForces() {
     if (layoutMode !== 'force' || simSteps > MAX_SIM_STEPS) return;
     simSteps++;
     for (let i = 0; i < nodePositions.length; i++) {
       for (let j = i + 1; j < nodePositions.length; j++) {
-        const diff = nodePositions[i].clone().sub(nodePositions[j]);
-        const dist = diff.length() || 0.01;
-        const f = diff.normalize().multiplyScalar(REPULSION / (dist * dist));
-        nodeVelocities[i].add(f); nodeVelocities[j].sub(f);
+        _diff.copy(nodePositions[i]).sub(nodePositions[j]);
+        const dist = _diff.length() || 0.01;
+        _diff.normalize().multiplyScalar(REPULSION / (dist * dist));
+        nodeVelocities[i].add(_diff); nodeVelocities[j].sub(_diff);
       }
     }
     edges.forEach(e => {
       const fi = phaseIdx[e.from], ti = phaseIdx[e.to];
       if (fi === undefined || ti === undefined) return;
-      const diff = nodePositions[ti].clone().sub(nodePositions[fi]);
-      const f = diff.normalize().multiplyScalar((diff.length() - REST_LENGTH) * ATTRACTION);
-      nodeVelocities[fi].add(f); nodeVelocities[ti].sub(f);
+      _diff.copy(nodePositions[ti]).sub(nodePositions[fi]);
+      const len = _diff.length() || 0.01;
+      _diff.normalize().multiplyScalar((len - REST_LENGTH) * ATTRACTION);
+      nodeVelocities[fi].add(_diff); nodeVelocities[ti].sub(_diff);
     });
-    const center = new THREE.Vector3();
-    nodePositions.forEach(p => center.add(p));
-    center.divideScalar(nodePositions.length || 1);
+    _center.set(0, 0, 0);
+    nodePositions.forEach(p => _center.add(p));
+    _center.divideScalar(nodePositions.length || 1);
     nodePositions.forEach((p, i) => {
-      nodeVelocities[i].add(center.clone().sub(p).multiplyScalar(0.002));
+      _diff.copy(_center).sub(p).multiplyScalar(0.002);
+      nodeVelocities[i].add(_diff);
       nodeVelocities[i].multiplyScalar(DAMPING);
       p.add(nodeVelocities[i]);
     });
@@ -1244,6 +1246,7 @@
 
   // ── Detail Panel ──
   let activeRow = null;
+  let cachedRows = null;
   function showDetailPanel(phase) {
     const panel = document.getElementById('detail-panel');
     panel.classList.add('active');
@@ -1252,9 +1255,9 @@
 
     // Highlight active row in sidebar table
     if (activeRow) activeRow.classList.remove('active-row');
-    const rows = document.getElementById('phase-tbody').querySelectorAll('tr');
-    const idx = phases.findIndex(p => p.number === phase.number);
-    if (idx >= 0 && rows[idx]) { rows[idx].classList.add('active-row'); activeRow = rows[idx]; }
+    if (!cachedRows) cachedRows = document.getElementById('phase-tbody').querySelectorAll('tr');
+    const idx = phaseIdx[phase.number];
+    if (idx !== undefined && cachedRows[idx]) { cachedRows[idx].classList.add('active-row'); activeRow = cachedRows[idx]; }
 
     // Tags
     const tagsContainer = document.getElementById('dp-tags');
