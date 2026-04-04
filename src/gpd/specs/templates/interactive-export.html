@@ -1,0 +1,1197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{project_title} — Interactive Research Map</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin="anonymous"></script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --bg: #212832;
+    --bg-surface: #2a3039;
+    --bg-overlay: #323a45;
+    --text-primary: #ede8e2;
+    --text-secondary: #f5e3c7;
+    --text-muted: #a19889;
+    --border: #313740;
+    --accent: #e8d4a8;
+
+    /* Status colors — colorblind-safe earth tones (deut+prot optimized, 80% brightness) */
+    --status-complete: #a9903c;
+    --status-partial: #638ca6;
+    --status-planned: #6e5d4c;
+    --status-empty: #393e44;
+    --status-failed: #a04639;
+    --status-warning: #a99c61;
+
+    /* Edge colors */
+    --edge-provides: #948978;
+    --edge-affects: #4b5059;
+    --edge-critical: #a04639;
+  }
+
+  [data-theme="light"] {
+    --bg: #f0ebe3;
+    --bg-surface: #e8e2d9;
+    --bg-overlay: #f0ebe3;
+    --text-primary: #1a2028;
+    --text-secondary: #404042;
+    --text-muted: #615c53;
+    --border: #a0988c;
+    --accent: #554a37;
+    --edge-provides: #554a37;
+    --edge-affects: #7b7366;
+    --edge-critical: #8c392c;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+  }
+
+  /* ── Canvas ── */
+  #graph-canvas {
+    flex: 1;
+    cursor: grab;
+    position: relative;
+    overflow: hidden;
+  }
+  #graph-canvas:active { cursor: grabbing; }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    position: relative;
+    width: 360px;
+    min-width: 240px;
+    max-width: 700px;
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  #sidebar.collapsed {
+    transition: transform 0.3s ease;
+    transform: translateX(100%);
+    min-width: 0;
+    width: 0;
+    border: none;
+    overflow: hidden;
+  }
+
+  /* ── Resize Handle ── */
+  #sidebar-resize {
+    position: absolute;
+    left: -6px;
+    top: 0;
+    bottom: 0;
+    width: 12px;
+    cursor: col-resize;
+    z-index: 60;
+  }
+  #sidebar-resize::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px;
+    height: 40px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  #sidebar-resize:hover::after { opacity: 0.6; }
+  #sidebar.collapsed #sidebar-resize { display: none; }
+
+  /* Active resize state — applied to body so nothing escapes */
+  body.sidebar-resizing {
+    cursor: col-resize !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+  body.sidebar-resizing #sidebar {
+    pointer-events: none;
+    transition: none !important;
+  }
+  body.sidebar-resizing #sidebar-resize {
+    pointer-events: auto;
+  }
+  body.sidebar-resizing #sidebar-resize::after {
+    opacity: 1;
+  }
+
+  .sidebar-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--bg-surface);
+    z-index: 10;
+  }
+  .sidebar-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .sidebar-section {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-section h3 {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+  }
+
+  /* ── Progress Bar ── */
+  .progress-bar-track {
+    width: 100%;
+    height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 8px 0;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+    background: var(--status-complete);
+  }
+  .progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  /* ── Phase Table ── */
+  .phase-table {
+    width: 100%;
+    font-size: 13px;
+    border-collapse: collapse;
+  }
+  .phase-table th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 6px 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid var(--border);
+  }
+  .phase-table td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .phase-table tr:hover td {
+    background: var(--bg-overlay);
+  }
+  .phase-table .status-icon {
+    font-size: 14px;
+    width: 24px;
+    text-align: center;
+  }
+
+  /* ── Detail Panel ── */
+  #detail-panel {
+    display: none;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    animation: fadeIn 0.2s ease;
+  }
+  #detail-panel.active { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  #detail-panel h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: var(--text-primary);
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  #detail-panel .one-liner {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+
+  .detail-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 4px;
+    margin-bottom: 4px;
+  }
+  .tag-provides { background: rgba(0,158,115,0.15); color: var(--status-complete); }
+  .tag-requires { background: rgba(0,114,178,0.15); color: var(--status-planned); }
+  .tag-affects  { background: rgba(230,159,0,0.15); color: var(--status-partial); }
+
+  .detail-subsection {
+    margin-top: 12px;
+  }
+  .detail-subsection h4 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .detail-subsection ul {
+    list-style: none;
+    padding: 0;
+  }
+  .detail-subsection li {
+    padding: 3px 0;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  .detail-subsection li::before {
+    content: "›";
+    color: var(--text-muted);
+    margin-right: 6px;
+  }
+
+  .equation-block {
+    background: var(--bg);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    margin: 6px 0;
+    border-radius: 0 4px 4px 0;
+    overflow-x: auto;
+    font-size: 14px;
+  }
+
+  .verification-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 13px;
+  }
+
+  /* ── Gap Alerts ── */
+  .gap-alert {
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 4px 0;
+    font-size: 12px;
+  }
+  .gap-high { background: rgba(213,94,0,0.12); border-left: 3px solid var(--status-failed); }
+  .gap-low  { background: rgba(230,159,0,0.12); border-left: 3px solid var(--status-partial); }
+  .gap-critical { background: rgba(213,94,0,0.25); border-left: 3px solid var(--status-failed); }
+  .gap-none { color: var(--status-complete); font-size: 13px; }
+
+  /* ── Controls ── */
+  #controls {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 20;
+  }
+
+  .ctrl-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .ctrl-btn:hover {
+    background: var(--bg-overlay);
+    border-color: var(--accent);
+  }
+  .ctrl-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  #title-bar {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 20;
+    pointer-events: none;
+  }
+  #title-bar h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  #title-bar .subtitle {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  #title-bar .hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  #title-bar .hint span {
+    color: var(--edge-critical);
+  }
+
+  /* ── Tooltip ── */
+  #tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--bg-overlay);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    max-width: 280px;
+    z-index: 30;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  #tooltip.visible { opacity: 1; }
+  #tooltip h4 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  #tooltip p {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 2px 0;
+  }
+
+  /* ── Legend ── */
+  #legend {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    z-index: 20;
+    font-size: 12px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0;
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .legend-line {
+    width: 20px;
+    height: 2px;
+  }
+  .legend-line.dashed {
+    background: repeating-linear-gradient(
+      90deg,
+      var(--edge-affects) 0px,
+      var(--edge-affects) 4px,
+      transparent 4px,
+      transparent 8px
+    );
+  }
+
+  /* ── Attribution ── */
+  #attribution {
+    position: absolute;
+    bottom: 16px;
+    right: 376px;
+    font-size: 11px;
+    color: var(--text-muted);
+    z-index: 20;
+    transition: right 0.3s ease;
+  }
+  #sidebar.collapsed ~ #attribution,
+  .sidebar-collapsed #attribution { right: 16px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    #sidebar {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      z-index: 50;
+      width: 320px;
+      min-width: 240px;
+    }
+    #sidebar.collapsed {
+      transform: translateX(100%);
+    }
+    #legend { display: none; }
+    #attribution { right: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Three.js Canvas ── -->
+<div id="graph-canvas">
+  <div id="controls">
+    <button class="ctrl-btn" id="btn-reset" title="Reset camera">⟳</button>
+    <button class="ctrl-btn" id="btn-critical" title="Highlight critical path">⚡</button>
+    <button class="ctrl-btn" id="btn-theme" title="Toggle theme">◐</button>
+    <button class="ctrl-btn" id="btn-sidebar" title="Toggle sidebar">☰</button>
+  </div>
+
+  <div id="title-bar">
+    <h1 id="project-title"></h1>
+    <div class="subtitle" id="project-subtitle"></div>
+    <div class="hint"><span>⚡</span> Click to isolate the bottleneck chain</div>
+  </div>
+
+  <div id="tooltip">
+    <h4 id="tt-title"></h4>
+    <p id="tt-oneliner"></p>
+    <p id="tt-status"></p>
+  </div>
+
+  <div id="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--status-complete)"></div> Complete</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--status-partial)"></div> In Progress</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--status-planned)"></div> Planned</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--status-empty)"></div> No Plans</div>
+    <div style="margin: 6px 0; border-top: 1px solid var(--border);"></div>
+    <div class="legend-item"><div class="legend-line" style="background:var(--edge-provides)"></div> Provides → Requires</div>
+    <div class="legend-item"><div class="legend-line dashed"></div> Affects Convention</div>
+    <div class="legend-item"><div class="legend-line" style="background:var(--edge-critical); height:3px"></div> Critical Path</div>
+  </div>
+
+  <div id="attribution">Generated with Get Physics Done (PSI)</div>
+</div>
+
+<!-- ── Sidebar ── -->
+<div id="sidebar">
+  <div id="sidebar-resize"></div>
+  <div class="sidebar-header">
+    <h2>Research Map</h2>
+  </div>
+
+  <!-- Progress -->
+  <div class="sidebar-section" id="progress-section">
+    <h3>Overall Progress</h3>
+    <div class="progress-label">
+      <span id="progress-text">0 / 0 phases</span>
+      <span id="progress-pct">0%</span>
+    </div>
+    <div class="progress-bar-track">
+      <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- Detail Panel (shown on node click) -->
+  <div id="detail-panel">
+    <h3 id="dp-title"></h3>
+    <div class="one-liner" id="dp-oneliner"></div>
+    <div id="dp-tags"></div>
+    <div class="detail-subsection" id="dp-results-section">
+      <h4>Key Results</h4>
+      <ul id="dp-results"></ul>
+    </div>
+    <div class="detail-subsection" id="dp-equations-section">
+      <h4>Equations</h4>
+      <div id="dp-equations"></div>
+    </div>
+    <div class="detail-subsection" id="dp-verification-section">
+      <h4>Verification</h4>
+      <div id="dp-verification"></div>
+    </div>
+  </div>
+
+  <!-- Phase Table -->
+  <div class="sidebar-section">
+    <h3>Phases</h3>
+    <table class="phase-table">
+      <thead>
+        <tr><th></th><th>Phase</th><th>Plans</th><th>Progress</th></tr>
+      </thead>
+      <tbody id="phase-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- Gap Analysis -->
+  <div class="sidebar-section" id="gaps-section">
+    <h3>Dependency Gaps</h3>
+    <div id="gaps-container"></div>
+  </div>
+
+  <!-- Critical Path -->
+  <div class="sidebar-section" id="critical-section">
+    <h3>Critical Path</h3>
+    <div id="critical-container"></div>
+  </div>
+</div>
+
+<!-- ── Project Data (injected by GPD export workflow) ── -->
+<script id="gpd-data" type="application/json">
+{GPD_PROJECT_DATA}
+</script>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GPD Interactive Research Map — Three.js Force-Directed Graph
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+(function() {
+  'use strict';
+
+  // ── Load Project Data ──
+  const DATA = JSON.parse(document.getElementById('gpd-data').textContent);
+  const phases = DATA.phases || [];
+  const edges = DATA.edges || [];
+  const gaps = DATA.gaps || [];
+  const criticalPath = DATA.critical_path || [];
+  const projectTitle = DATA.project_title || 'Untitled Project';
+  const milestone = DATA.milestone || '';
+  const generatedDate = DATA.generated_date || '';
+
+  // ── Status Color Map ──
+  const STATUS_COLORS = {
+    complete: 0xa9903c,
+    partial:  0x638ca6,
+    planned:  0x6e5d4c,
+    empty:    0x393e44
+  };
+
+  const STATUS_ICONS = {
+    complete: '✓',
+    partial:  '◆',
+    planned:  '○',
+    empty:    '·'
+  };
+
+  // ── Setup Title ──
+  document.getElementById('project-title').textContent = projectTitle;
+  document.getElementById('project-subtitle').textContent =
+    [milestone, generatedDate].filter(Boolean).join(' · ');
+
+  // ── Three.js Setup ──
+  const canvas = document.getElementById('graph-canvas');
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  camera.position.set(0, 0, Math.max(8, phases.length * 1.5));
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  canvas.appendChild(renderer.domElement);
+
+  function updateRendererSize() {
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  updateRendererSize();
+  window.addEventListener('resize', updateRendererSize);
+
+  // ── Build Node Geometry ──
+  const nodeGroup = new THREE.Group();
+  const edgeGroup = new THREE.Group();
+  scene.add(edgeGroup);
+  scene.add(nodeGroup);
+
+  const nodeRadius = 0.35;
+  const nodeMeshes = [];
+  const nodePositions = [];
+  const nodeVelocities = [];
+
+  // Initial positions — circular layout
+  phases.forEach((phase, i) => {
+    const angle = (i / phases.length) * Math.PI * 2;
+    const radius = Math.max(3, phases.length * 0.6);
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    const z = (Math.random() - 0.5) * 2;
+
+    const geometry = new THREE.SphereGeometry(nodeRadius, 32, 32);
+    const color = STATUS_COLORS[phase.status] || STATUS_COLORS.empty;
+    const material = new THREE.MeshPhongMaterial({
+      color: color,
+      emissive: color,
+      emissiveIntensity: 0.3,
+      shininess: 80,
+      transparent: true,
+      opacity: 0.9
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x, y, z);
+    mesh.userData = { index: i, phase: phase };
+    nodeGroup.add(mesh);
+    nodeMeshes.push(mesh);
+    nodePositions.push(new THREE.Vector3(x, y, z));
+    nodeVelocities.push(new THREE.Vector3(0, 0, 0));
+
+    // Label sprite
+    const labelCanvas = document.createElement('canvas');
+    const ctx = labelCanvas.getContext('2d');
+    labelCanvas.width = 256;
+    labelCanvas.height = 64;
+    ctx.fillStyle = 'transparent';
+    ctx.fillRect(0, 0, 256, 64);
+    ctx.font = 'bold 28px -apple-system, sans-serif';
+    ctx.fillStyle = '#ede8e2';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const label = `P${phase.number}`;
+    ctx.fillText(label, 128, 32);
+    const texture = new THREE.CanvasTexture(labelCanvas);
+    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(1.2, 0.3, 1);
+    sprite.position.set(x, y - nodeRadius - 0.3, z);
+    sprite.userData = { isLabel: true, nodeIndex: i };
+    nodeGroup.add(sprite);
+  });
+
+  // ── Build Edges ──
+  const edgeLines = [];
+  const criticalSet = new Set();
+  for (let i = 0; i < criticalPath.length - 1; i++) {
+    criticalSet.add(`${criticalPath[i]}-${criticalPath[i+1]}`);
+  }
+
+  const EDGE_AXIS = new THREE.Vector3(0, 1, 0);
+
+  edges.forEach(edge => {
+    const fromIdx = phases.findIndex(p => p.number === edge.from);
+    const toIdx = phases.findIndex(p => p.number === edge.to);
+    if (fromIdx < 0 || toIdx < 0) return;
+
+    const isCritical = criticalSet.has(`${edge.from}-${edge.to}`);
+    const isAffects = edge.type === 'affects';
+
+    let color;
+    if (isCritical) {
+      color = 0xa04639;
+    } else if (isAffects) {
+      color = 0x4b5059;
+    } else {
+      color = 0x948978;
+    }
+
+    let edgeObj;
+
+    if (isCritical) {
+      // Thick cylinder mesh for critical path edges
+      const cylGeom = new THREE.CylinderGeometry(0.04, 0.04, 1, 6);
+      const cylMat = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.85
+      });
+      edgeObj = new THREE.Mesh(cylGeom, cylMat);
+      edgeObj.userData = { fromIdx, toIdx, edge, isCritical, isCylinder: true };
+    } else {
+      // Thin line for regular edges
+      const material = new THREE.LineBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: isAffects ? 0.4 : 0.6
+      });
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(6);
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      edgeObj = new THREE.Line(geometry, material);
+      edgeObj.userData = { fromIdx, toIdx, edge, isCritical, isCylinder: false };
+    }
+
+    edgeGroup.add(edgeObj);
+    edgeLines.push(edgeObj);
+  });
+
+  // ── Lighting ──
+  const ambient = new THREE.AmbientLight(0xffffff, 0.48);
+  scene.add(ambient);
+  const point = new THREE.PointLight(0xffffff, 0.64);
+  point.position.set(10, 10, 10);
+  scene.add(point);
+
+  // ── Force Simulation ──
+  const REPULSION = 4.0;
+  const ATTRACTION = 0.008;
+  const DAMPING = 0.85;
+  const REST_LENGTH = 3.0;
+  let simulating = true;
+  let simSteps = 0;
+  const MAX_SIM_STEPS = 300;
+
+  function simulateForces() {
+    if (!simulating || simSteps > MAX_SIM_STEPS) return;
+    simSteps++;
+
+    // Repulsion between all nodes
+    for (let i = 0; i < nodePositions.length; i++) {
+      for (let j = i + 1; j < nodePositions.length; j++) {
+        const diff = nodePositions[i].clone().sub(nodePositions[j]);
+        const dist = diff.length() || 0.01;
+        const force = REPULSION / (dist * dist);
+        const f = diff.normalize().multiplyScalar(force);
+        nodeVelocities[i].add(f);
+        nodeVelocities[j].sub(f);
+      }
+    }
+
+    // Attraction along edges
+    edges.forEach(edge => {
+      const fi = phases.findIndex(p => p.number === edge.from);
+      const ti = phases.findIndex(p => p.number === edge.to);
+      if (fi < 0 || ti < 0) return;
+
+      const diff = nodePositions[ti].clone().sub(nodePositions[fi]);
+      const dist = diff.length() || 0.01;
+      const force = (dist - REST_LENGTH) * ATTRACTION;
+      const f = diff.normalize().multiplyScalar(force);
+      nodeVelocities[fi].add(f);
+      nodeVelocities[ti].sub(f);
+    });
+
+    // Center gravity
+    const center = new THREE.Vector3();
+    nodePositions.forEach(p => center.add(p));
+    center.divideScalar(nodePositions.length || 1);
+    nodePositions.forEach((p, i) => {
+      const toCenter = center.clone().sub(p).multiplyScalar(0.002);
+      nodeVelocities[i].add(toCenter);
+    });
+
+    // Apply velocities + damping
+    nodePositions.forEach((pos, i) => {
+      nodeVelocities[i].multiplyScalar(DAMPING);
+      pos.add(nodeVelocities[i]);
+      nodeMeshes[i].position.copy(pos);
+    });
+
+    // Update label positions
+    nodeGroup.children.forEach(child => {
+      if (child.userData && child.userData.isLabel) {
+        const ni = child.userData.nodeIndex;
+        child.position.set(
+          nodePositions[ni].x,
+          nodePositions[ni].y - nodeRadius - 0.3,
+          nodePositions[ni].z
+        );
+      }
+    });
+
+    // Update edge positions
+    edgeLines.forEach(line => {
+      const { fromIdx, toIdx, isCylinder } = line.userData;
+      const pA = nodePositions[fromIdx];
+      const pB = nodePositions[toIdx];
+
+      if (isCylinder) {
+        // Position cylinder between two nodes
+        const mid = pA.clone().add(pB).multiplyScalar(0.5);
+        const dir = pB.clone().sub(pA);
+        const len = dir.length();
+        line.position.copy(mid);
+        line.scale.set(1, len, 1);
+        line.quaternion.setFromUnitVectors(EDGE_AXIS, dir.normalize());
+      } else {
+        const posArr = line.geometry.attributes.position.array;
+        posArr[0] = pA.x; posArr[1] = pA.y; posArr[2] = pA.z;
+        posArr[3] = pB.x; posArr[4] = pB.y; posArr[5] = pB.z;
+        line.geometry.attributes.position.needsUpdate = true;
+      }
+    });
+  }
+
+  // ── Camera Controls (orbit) ──
+  let isDragging = false;
+  let prevMouse = { x: 0, y: 0 };
+  let cameraTheta = 0;
+  let cameraPhi = Math.PI / 2;
+  let cameraRadius = camera.position.length();
+
+  canvas.addEventListener('mousedown', e => {
+    if (e.target.closest('#controls') || e.target.closest('#legend')) return;
+    isDragging = true;
+    prevMouse = { x: e.clientX, y: e.clientY };
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (isDragging) {
+      const dx = e.clientX - prevMouse.x;
+      const dy = e.clientY - prevMouse.y;
+      cameraTheta -= dx * 0.005;
+      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi - dy * 0.005));
+      prevMouse = { x: e.clientX, y: e.clientY };
+      updateCameraPosition();
+    } else {
+      handleHover(e);
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => { isDragging = false; });
+  canvas.addEventListener('mouseleave', () => { isDragging = false; hideTooltip(); });
+
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    cameraRadius = Math.max(3, Math.min(50, cameraRadius + e.deltaY * 0.01));
+    updateCameraPosition();
+  }, { passive: false });
+
+  canvas.addEventListener('click', e => {
+    if (e.target.closest('#controls') || e.target.closest('#legend')) return;
+    handleClick(e);
+  });
+
+  function updateCameraPosition() {
+    camera.position.x = cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+    camera.position.y = cameraRadius * Math.cos(cameraPhi);
+    camera.position.z = cameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+    camera.lookAt(0, 0, 0);
+  }
+
+  // ── Raycasting (hover + click) ──
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  const tooltip = document.getElementById('tooltip');
+
+  function getIntersectedNode(event) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(nodeMeshes);
+    return hits.length > 0 ? hits[0].object : null;
+  }
+
+  function handleHover(event) {
+    const node = getIntersectedNode(event);
+    if (node) {
+      const phase = node.userData.phase;
+      document.getElementById('tt-title').textContent = `Phase ${phase.number}: ${phase.name}`;
+      document.getElementById('tt-oneliner').textContent = phase.one_liner || '';
+      document.getElementById('tt-status').textContent = `${STATUS_ICONS[phase.status] || '·'} ${phase.status}`;
+      tooltip.style.left = (event.clientX + 16) + 'px';
+      tooltip.style.top = (event.clientY - 8) + 'px';
+      tooltip.classList.add('visible');
+      document.body.style.cursor = 'pointer';
+
+      // Highlight node
+      nodeMeshes.forEach((m, i) => {
+        if (i === node.userData.index) {
+          m.material.emissiveIntensity = 0.7;
+          m.scale.set(1.2, 1.2, 1.2);
+        } else {
+          m.material.emissiveIntensity = 0.3;
+          m.scale.set(1, 1, 1);
+        }
+      });
+    } else {
+      hideTooltip();
+      document.body.style.cursor = 'grab';
+      nodeMeshes.forEach(m => {
+        m.material.emissiveIntensity = 0.3;
+        m.scale.set(1, 1, 1);
+      });
+    }
+  }
+
+  function hideTooltip() {
+    tooltip.classList.remove('visible');
+  }
+
+  function handleClick(event) {
+    const node = getIntersectedNode(event);
+    if (node) {
+      showDetailPanel(node.userData.phase);
+    }
+  }
+
+  // ── Detail Panel ──
+  function showDetailPanel(phase) {
+    const panel = document.getElementById('detail-panel');
+    panel.classList.add('active');
+
+    document.getElementById('dp-title').textContent = `Phase ${phase.number}: ${phase.name}`;
+    document.getElementById('dp-oneliner').textContent = phase.one_liner || '';
+
+    // Tags
+    const tagsContainer = document.getElementById('dp-tags');
+    tagsContainer.innerHTML = '';
+    (phase.provides || []).forEach(p => {
+      const tag = document.createElement('span');
+      tag.className = 'detail-tag tag-provides';
+      tag.textContent = `provides: ${p}`;
+      tagsContainer.appendChild(tag);
+    });
+    (phase.requires || []).forEach(r => {
+      const tag = document.createElement('span');
+      tag.className = 'detail-tag tag-requires';
+      tag.textContent = `requires: ${r}`;
+      tagsContainer.appendChild(tag);
+    });
+    (phase.affects || []).forEach(a => {
+      const tag = document.createElement('span');
+      tag.className = 'detail-tag tag-affects';
+      tag.textContent = `affects: ${a}`;
+      tagsContainer.appendChild(tag);
+    });
+
+    // Key Results
+    const resultsList = document.getElementById('dp-results');
+    const resultsSection = document.getElementById('dp-results-section');
+    resultsList.innerHTML = '';
+    if (phase.key_results && phase.key_results.length) {
+      resultsSection.style.display = 'block';
+      phase.key_results.forEach(r => {
+        const li = document.createElement('li');
+        li.textContent = r;
+        resultsList.appendChild(li);
+      });
+    } else {
+      resultsSection.style.display = 'none';
+    }
+
+    // Equations
+    const eqContainer = document.getElementById('dp-equations');
+    const eqSection = document.getElementById('dp-equations-section');
+    eqContainer.innerHTML = '';
+    if (phase.equations && phase.equations.length) {
+      eqSection.style.display = 'block';
+      phase.equations.forEach(eq => {
+        const div = document.createElement('div');
+        div.className = 'equation-block';
+        div.textContent = eq;
+        eqContainer.appendChild(div);
+      });
+      if (window.MathJax && window.MathJax.typesetPromise) {
+        window.MathJax.typesetPromise([eqContainer]);
+      }
+    } else {
+      eqSection.style.display = 'none';
+    }
+
+    // Verification
+    const verContainer = document.getElementById('dp-verification');
+    const verSection = document.getElementById('dp-verification-section');
+    verContainer.innerHTML = '';
+    if (phase.verification && phase.verification.length) {
+      verSection.style.display = 'block';
+      phase.verification.forEach(v => {
+        const row = document.createElement('div');
+        row.className = 'verification-row';
+        const icon = v.passed ? '✓' : (v.warning ? '⚠' : '✗');
+        const color = v.passed ? 'var(--status-complete)' : (v.warning ? 'var(--status-warning)' : 'var(--status-failed)');
+        row.innerHTML = `<span style="color:${color}">${icon}</span> ${v.name}`;
+        verContainer.appendChild(row);
+      });
+    } else {
+      verSection.style.display = 'none';
+    }
+  }
+
+  // ── Sidebar: Phase Table ──
+  const tbody = document.getElementById('phase-tbody');
+  phases.forEach(phase => {
+    const tr = document.createElement('tr');
+    const icon = STATUS_ICONS[phase.status] || '·';
+    const statusColor = {
+      complete: 'var(--status-complete)',
+      partial: 'var(--status-partial)',
+      planned: 'var(--status-planned)',
+      empty: 'var(--status-empty)'
+    }[phase.status] || 'var(--text-muted)';
+
+    const plansText = phase.plans_complete !== undefined
+      ? `${phase.plans_complete}/${phase.plans_total}`
+      : '—';
+
+    const pctText = phase.progress !== undefined
+      ? `${phase.progress}%`
+      : '—';
+
+    tr.innerHTML = `
+      <td class="status-icon" style="color:${statusColor}">${icon}</td>
+      <td>P${phase.number}: ${phase.name}</td>
+      <td>${plansText}</td>
+      <td>${pctText}</td>
+    `;
+    tr.addEventListener('click', () => showDetailPanel(phase));
+    tbody.appendChild(tr);
+  });
+
+  // ── Sidebar: Overall Progress ──
+  const completed = phases.filter(p => p.status === 'complete').length;
+  const total = phases.length;
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  document.getElementById('progress-text').textContent = `${completed} / ${total} phases`;
+  document.getElementById('progress-pct').textContent = `${pct}%`;
+  document.getElementById('progress-fill').style.width = pct + '%';
+
+  // ── Sidebar: Gap Analysis ──
+  const gapsContainer = document.getElementById('gaps-container');
+  if (gaps.length === 0) {
+    gapsContainer.innerHTML = '<div class="gap-none">✓ No dependency gaps found.</div>';
+  } else {
+    gaps.forEach(gap => {
+      const sev = gap.severity || 'low';
+      const div = document.createElement('div');
+      div.className = `gap-alert gap-${sev}`;
+      div.textContent = gap.description;
+      gapsContainer.appendChild(div);
+    });
+  }
+
+  // ── Sidebar: Critical Path ──
+  const critContainer = document.getElementById('critical-container');
+  if (criticalPath.length > 0) {
+    const pathStr = criticalPath.map(n => `P${n}`).join(' → ');
+    critContainer.innerHTML = `<div style="font-family:monospace;font-size:13px;color:var(--accent)">${pathStr}</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">${criticalPath.length} phases on critical path out of ${total} total</div>`;
+  } else {
+    critContainer.innerHTML = '<div style="color:var(--text-secondary);font-size:13px">No sequential dependencies — all phases can run in parallel.</div>';
+  }
+
+  // ── Controls ──
+  let criticalHighlight = false;
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    cameraTheta = 0;
+    cameraPhi = Math.PI / 2;
+    cameraRadius = Math.max(8, phases.length * 1.5);
+    updateCameraPosition();
+  });
+
+  document.getElementById('btn-critical').addEventListener('click', () => {
+    criticalHighlight = !criticalHighlight;
+    document.getElementById('btn-critical').classList.toggle('active', criticalHighlight);
+
+    edgeLines.forEach(line => {
+      if (criticalHighlight) {
+        line.material.opacity = line.userData.isCritical ? 0.9 : 0.1;
+      } else {
+        line.material.opacity = line.userData.edge.type === 'affects' ? 0.4 : 0.6;
+      }
+    });
+
+    const criticalPhaseNumbers = new Set(criticalPath);
+    nodeMeshes.forEach((m, i) => {
+      if (criticalHighlight) {
+        m.material.opacity = criticalPhaseNumbers.has(phases[i].number) ? 1.0 : 0.2;
+      } else {
+        m.material.opacity = 0.9;
+      }
+    });
+  });
+
+  document.getElementById('btn-theme').addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme');
+    document.documentElement.setAttribute('data-theme', current === 'light' ? '' : 'light');
+    // Update scene background
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    renderer.setClearColor(isLight ? 0xf0ebe3 : 0x212832, 1);
+    // Update label colors
+    nodeGroup.children.forEach(child => {
+      if (child.userData && child.userData.isLabel) {
+        const labelCanvas = document.createElement('canvas');
+        const ctx = labelCanvas.getContext('2d');
+        labelCanvas.width = 256;
+        labelCanvas.height = 64;
+        ctx.font = 'bold 28px -apple-system, sans-serif';
+        ctx.fillStyle = isLight ? '#1a2028' : '#ede8e2';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const ni = child.userData.nodeIndex;
+        ctx.fillText(`P${phases[ni].number}`, 128, 32);
+        child.material.map = new THREE.CanvasTexture(labelCanvas);
+        child.material.needsUpdate = true;
+      }
+    });
+  });
+
+  document.getElementById('btn-sidebar').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+    updateRendererSize();
+  });
+
+  // ── Sidebar Resize ──
+  const sidebar = document.getElementById('sidebar');
+  const resizeHandle = document.getElementById('sidebar-resize');
+
+  resizeHandle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    document.body.classList.add('sidebar-resizing');
+
+    function onMove(ev) {
+      sidebar.style.width = Math.max(240, Math.min(700, window.innerWidth - ev.clientX)) + 'px';
+    }
+
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.classList.remove('sidebar-resizing');
+      updateRendererSize();
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  // ── Set initial clear color ──
+  renderer.setClearColor(0x212832, 1);
+
+  // ── Render Loop ──
+  function animate() {
+    requestAnimationFrame(animate);
+    simulateForces();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+})();
+</script>
+</body>
+</html>
