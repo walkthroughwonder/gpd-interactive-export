@@ -1160,7 +1160,7 @@
 
   // ── Camera Controls ──
   let isDragging = false, prevMouse = { x: 0, y: 0 };
-  let cameraTheta = 0, cameraPhi = Math.PI / 2;
+  let cameraTheta = Math.PI / 2, cameraPhi = Math.PI / 2;
   let cameraRadius = camera.position.length();
 
   canvas.addEventListener('mousedown', e => {
@@ -1415,7 +1415,7 @@
         nodePositions[i].copy(dagPosition(i));
         nodeVelocities[i].set(0, 0, 0);
       });
-      cameraTheta = 0; cameraPhi = Math.PI / 2;
+      cameraTheta = Math.PI / 2; cameraPhi = Math.PI / 2;
       cameraRadius = Math.max(8, (maxDepth + 1) * SPACING_X * 0.7);
       updateCameraPosition();
     } else {
@@ -1492,7 +1492,7 @@
 
   // ── Reset ──
   document.getElementById('btn-reset').addEventListener('click', () => {
-    cameraTheta = 0; cameraPhi = Math.PI / 2;
+    cameraTheta = Math.PI / 2; cameraPhi = Math.PI / 2;
     cameraRadius = layoutMode === 'dag'
       ? Math.max(8, (maxDepth + 1) * SPACING_X * 0.7)
       : Math.max(8, phases.length * 1.5);

@@ -21,15 +21,37 @@ Zero dependencies beyond CDN-loaded Three.js and MathJax. Single HTML file, work
 contribution/
 ├── GITHUB_ISSUE.md                          # Issue text to post on psi-oss/get-physics-done
 ├── README.md                                # This file
+├── index.html                               # The demo, rendered. Byte-identical to demo/index.html
 ├── demo/
 │   └── index.html                           # Working demo with Conformal Bootstrap sample data
 ├── src/gpd/specs/templates/
-│   └── interactive-export.html              # The HTML template (new file for the repo)
+│   ├── interactive-export.html              # The HTML template (new file for the repo)
+│   └── interactive-export-demo.html         # Rendered copy of the template, for eyeballing it
 ├── patches/
 │   └── export-workflow-addition.md          # Detailed instructions for modifying export.md
 └── tests/
-    └── test_interactive_export.py           # 28 tests (26 pass, 2 skipped pending workflow update)
+    └── test_interactive_export.py           # 29 tests (27 pass, 2 skipped pending workflow update)
 ```
+
+### Which file is the source of truth
+
+`src/gpd/specs/templates/interactive-export.html` is the only artifact that
+ships upstream. Everything else is derived from it by substituting the two
+placeholders, `{project_title}` and `{GPD_PROJECT_DATA}`:
+
+```text
+interactive-export.html  --substitute-->  index.html
+                                          demo/index.html                  (identical copy)
+                                          interactive-export-demo.html     (identical copy)
+```
+
+These had drifted: the template was an older, reduced version missing the
+DAG/force layout toggle, convention-edge mode, verification rings, and the
+active-row table highlight, so following the `cp` instruction below shipped a
+materially poorer artifact than the demo advertised. The rendered copies are
+now regenerated from the template, and the round trip is exact — substituting
+the demo's data back into the template reproduces `index.html` byte for byte.
+**Edit the template, then regenerate.** Do not edit a rendered copy.
 
 ## How to Submit
 
