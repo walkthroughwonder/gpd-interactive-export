@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>{project_title} — Interactive Research Map</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin="anonymous"></script>
+<script>
+  window.MathJax = {
+    chtml: { displayOverflow: 'overflow', minScale: 0.5 },
+    options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+  };
+</script>
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <style>
   :root {
@@ -79,9 +85,9 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    transition: transform 0.3s ease;
   }
   #sidebar.collapsed {
-    transition: transform 0.3s ease;
     transform: translateX(100%);
     min-width: 0;
     width: 0;
@@ -123,7 +129,7 @@
   }
   body.sidebar-resizing #sidebar {
     pointer-events: none;
-    transition: none !important;
+    transition: none;
   }
   body.sidebar-resizing #sidebar-resize {
     pointer-events: auto;
@@ -151,6 +157,7 @@
   .sidebar-section {
     padding: 16px 20px;
     border-bottom: 1px solid var(--border);
+    min-width: 0;
   }
   .sidebar-section h3 {
     font-size: 12px;
@@ -208,6 +215,9 @@
   .phase-table tr:hover td {
     background: var(--bg-overlay);
   }
+  .phase-table tr.active-row td {
+    background: var(--bg-overlay);
+  }
   .phase-table .status-icon {
     font-size: 14px;
     width: 24px;
@@ -220,8 +230,31 @@
     padding: 16px 20px;
     border-bottom: 1px solid var(--border);
     animation: fadeIn 0.2s ease;
+    min-width: 0;
   }
   #detail-panel.active { display: block; }
+  .detail-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .dp-close {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .dp-close:hover {
+    color: var(--text-primary);
+    background: var(--bg-overlay);
+  }
 
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(-4px); }
@@ -286,7 +319,34 @@
     margin: 6px 0;
     border-radius: 0 4px 4px 0;
     overflow-x: auto;
+    max-width: 100%;
     font-size: 14px;
+  }
+  .equation-block mjx-container {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  #dp-equations { min-width: 0; max-width: 100%; }
+  .eq-dep-dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .eq-dep-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .eq-dep-dot::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--dot-color, var(--accent));
   }
 
   .verification-row {
@@ -439,6 +499,20 @@
     );
   }
 
+  /* ── Convention Badge ── */
+  #convention-badge {
+    position: absolute;
+    bottom: 16px;
+    left: 180px;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    z-index: 20;
+  }
+
   /* ── Attribution ── */
   #attribution {
     position: absolute;
@@ -477,7 +551,9 @@
 <div id="graph-canvas">
   <div id="controls">
     <button class="ctrl-btn" id="btn-reset" title="Reset camera">⟳</button>
-    <button class="ctrl-btn" id="btn-critical" title="Highlight critical path">⚡</button>
+    <button class="ctrl-btn" id="btn-layout" title="Toggle DAG / Force layout">◫</button>
+    <button class="ctrl-btn active" id="btn-critical" title="Toggle bottleneck focus">⚡</button>
+    <button class="ctrl-btn" id="btn-conventions" title="Convention edges (V)">∿</button>
     <button class="ctrl-btn" id="btn-theme" title="Toggle theme">◐</button>
     <button class="ctrl-btn" id="btn-sidebar" title="Toggle sidebar">☰</button>
   </div>
@@ -485,7 +561,7 @@
   <div id="title-bar">
     <h1 id="project-title"></h1>
     <div class="subtitle" id="project-subtitle"></div>
-    <div class="hint"><span>⚡</span> Click to isolate the bottleneck chain</div>
+    <div class="hint" id="hint-text"><span>⚡</span> Click to show all edges</div>
   </div>
 
   <div id="tooltip">
@@ -505,6 +581,7 @@
     <div class="legend-item"><div class="legend-line" style="background:var(--edge-critical); height:3px"></div> Critical Path</div>
   </div>
 
+  <div id="convention-badge" style="display:none"></div>
   <div id="attribution">Generated with Get Physics Done (PSI)</div>
 </div>
 
@@ -529,7 +606,10 @@
 
   <!-- Detail Panel (shown on node click) -->
   <div id="detail-panel">
-    <h3 id="dp-title"></h3>
+    <div class="detail-header">
+      <h3 id="dp-title"></h3>
+      <button type="button" id="dp-close" class="dp-close" title="Close detail">×</button>
+    </div>
     <div class="one-liner" id="dp-oneliner"></div>
     <div id="dp-tags"></div>
     <div class="detail-subsection" id="dp-results-section">
@@ -600,13 +680,36 @@
     planned:  0x6e5d4c,
     empty:    0x393e44
   };
+  const STATUS_CSS = {};
+  for (const [k, v] of Object.entries(STATUS_COLORS))
+    STATUS_CSS[k] = '#' + v.toString(16).padStart(6, '0');
+  const STATUS_ICONS = { complete: '✓', partial: '◆', planned: '○', empty: '·' };
 
-  const STATUS_ICONS = {
-    complete: '✓',
-    partial:  '◆',
-    planned:  '○',
-    empty:    '·'
-  };
+  // ── Precompute: critical path set, phase-number-to-index, topology depth ──
+  const criticalSet = new Set();
+  for (let i = 0; i < criticalPath.length - 1; i++)
+    criticalSet.add(`${criticalPath[i]}-${criticalPath[i+1]}`);
+  const criticalPhaseSet = new Set(criticalPath);
+  const phaseIdx = {};
+  phases.forEach((p, i) => { phaseIdx[p.number] = i; });
+
+  // Topological depth (longest path from any root)
+  const depth = new Array(phases.length).fill(0);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    edges.forEach(e => {
+      if (e.type === 'affects') return;
+      const fi = phaseIdx[e.from], ti = phaseIdx[e.to];
+      if (fi === undefined || ti === undefined) return;
+      if (depth[ti] < depth[fi] + 1) { depth[ti] = depth[fi] + 1; changed = true; }
+    });
+  }
+  const maxDepth = Math.max(...depth, 0);
+
+  // Wave grouping: phases at same depth
+  const waves = {};
+  depth.forEach((d, i) => { (waves[d] = waves[d] || []).push(i); });
 
   // ── Setup Title ──
   document.getElementById('project-title').textContent = projectTitle;
@@ -617,273 +720,275 @@
   const canvas = document.getElementById('graph-canvas');
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-  camera.position.set(0, 0, Math.max(8, phases.length * 1.5));
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   canvas.appendChild(renderer.domElement);
 
+  let cameraReady = false;
   function updateRendererSize() {
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    if (cameraReady) {
+      const { minR, maxR } = zoomLimits();
+      cameraRadius = Math.min(maxR, Math.max(minR, cameraRadius));
+      updateCameraPosition();
+    }
   }
   updateRendererSize();
   window.addEventListener('resize', updateRendererSize);
 
-  // ── Build Node Geometry ──
+  // ── Layout modes ──
+  let layoutMode = 'dag'; // 'dag' or 'force'
+  const SPACING_X = 3.0;
+  const SPACING_Y = 2.5;
+
+  function dagPosition(i) {
+    const d = depth[i];
+    const wave = waves[d];
+    const row = wave.indexOf(i);
+    const totalInWave = wave.length;
+    const x = (d - maxDepth / 2) * SPACING_X;
+    const y = (row - (totalInWave - 1) / 2) * SPACING_Y;
+    return new THREE.Vector3(x, y, 0);
+  }
+
+  // ── Build Nodes ──
   const nodeGroup = new THREE.Group();
   const edgeGroup = new THREE.Group();
+  const ringGroup = new THREE.Group();
   scene.add(edgeGroup);
   scene.add(nodeGroup);
+  scene.add(ringGroup);
 
   const nodeRadius = 0.35;
   const nodeMeshes = [];
   const nodePositions = [];
   const nodeVelocities = [];
+  const ringMeshes = [];
 
-  // Initial positions — circular layout
+  function addVerificationArc(startFrac, endFrac, arcColor, pos, nodeIndex) {
+    const ringR = nodeRadius + 0.08;
+    const arc = new THREE.RingGeometry(ringR, ringR + 0.04,
+      Math.max(2, Math.round(64 * (endFrac - startFrac))), 1,
+      startFrac * Math.PI * 2, (endFrac - startFrac) * Math.PI * 2);
+    const mat = new THREE.MeshBasicMaterial({
+      color: arcColor, side: THREE.DoubleSide, transparent: true, opacity: 0.9
+    });
+    const m = new THREE.Mesh(arc, mat);
+    m.position.copy(pos);
+    m.userData = { isRing: true, nodeIndex };
+    ringGroup.add(m);
+    ringMeshes.push(m);
+  }
+
   phases.forEach((phase, i) => {
-    const angle = (i / phases.length) * Math.PI * 2;
-    const radius = Math.max(3, phases.length * 0.6);
-    const x = Math.cos(angle) * radius;
-    const y = Math.sin(angle) * radius;
-    const z = (Math.random() - 0.5) * 2;
-
-    const geometry = new THREE.SphereGeometry(nodeRadius, 32, 32);
+    const pos = dagPosition(i);
     const color = STATUS_COLORS[phase.status] || STATUS_COLORS.empty;
+    const geometry = new THREE.SphereGeometry(nodeRadius, 32, 32);
     const material = new THREE.MeshPhongMaterial({
-      color: color,
-      emissive: color,
-      emissiveIntensity: 0.3,
-      shininess: 80,
-      transparent: true,
-      opacity: 0.9
+      color, emissive: color, emissiveIntensity: 0.3, shininess: 80,
+      transparent: true, opacity: criticalPhaseSet.has(phase.number) ? 1.0 : 0.25
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(x, y, z);
-    mesh.userData = { index: i, phase: phase };
+    mesh.position.copy(pos);
+    mesh.userData = { index: i, phase };
     nodeGroup.add(mesh);
     nodeMeshes.push(mesh);
-    nodePositions.push(new THREE.Vector3(x, y, z));
+    nodePositions.push(pos.clone());
     nodeVelocities.push(new THREE.Vector3(0, 0, 0));
 
+    // Verification ring
+    const vChecks = phase.verification || [];
+    if (vChecks.length > 0) {
+      const passed = vChecks.filter(v => v.passed && !v.warning).length;
+      const warned = vChecks.filter(v => v.warning).length;
+      const failed = vChecks.filter(v => !v.passed && !v.warning).length;
+      const total = vChecks.length;
+      let cursor = 0;
+      if (passed) { addVerificationArc(cursor, cursor + passed / total, 0xa9903c, pos, i); cursor += passed / total; }
+      if (warned) { addVerificationArc(cursor, cursor + warned / total, 0xa99c61, pos, i); cursor += warned / total; }
+      if (failed) { addVerificationArc(cursor, cursor + failed / total, 0xa04639, pos, i); cursor += failed / total; }
+    }
+
     // Label sprite
-    const labelCanvas = document.createElement('canvas');
-    const ctx = labelCanvas.getContext('2d');
-    labelCanvas.width = 256;
-    labelCanvas.height = 64;
-    ctx.fillStyle = 'transparent';
-    ctx.fillRect(0, 0, 256, 64);
-    ctx.font = 'bold 28px -apple-system, sans-serif';
-    ctx.fillStyle = '#ede8e2';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const label = `P${phase.number}`;
-    ctx.fillText(label, 128, 32);
-    const texture = new THREE.CanvasTexture(labelCanvas);
-    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
-    const sprite = new THREE.Sprite(spriteMat);
+    const lc = document.createElement('canvas');
+    const lx = lc.getContext('2d');
+    lc.width = 256; lc.height = 64;
+    lx.font = 'bold 28px -apple-system, sans-serif';
+    lx.fillStyle = '#ede8e2';
+    lx.textAlign = 'center'; lx.textBaseline = 'middle';
+    lx.fillText(`P${phase.number}`, 128, 32);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(lc), transparent: true }));
     sprite.scale.set(1.2, 0.3, 1);
-    sprite.position.set(x, y - nodeRadius - 0.3, z);
+    sprite.position.set(pos.x, pos.y - nodeRadius - 0.3, pos.z);
     sprite.userData = { isLabel: true, nodeIndex: i };
     nodeGroup.add(sprite);
   });
 
   // ── Build Edges ──
   const edgeLines = [];
-  const criticalSet = new Set();
-  for (let i = 0; i < criticalPath.length - 1; i++) {
-    criticalSet.add(`${criticalPath[i]}-${criticalPath[i+1]}`);
-  }
-
   const EDGE_AXIS = new THREE.Vector3(0, 1, 0);
 
   edges.forEach(edge => {
-    const fromIdx = phases.findIndex(p => p.number === edge.from);
-    const toIdx = phases.findIndex(p => p.number === edge.to);
-    if (fromIdx < 0 || toIdx < 0) return;
-
+    const fromIdx = phaseIdx[edge.from], toIdx = phaseIdx[edge.to];
+    if (fromIdx === undefined || toIdx === undefined) return;
     const isCritical = criticalSet.has(`${edge.from}-${edge.to}`);
     const isAffects = edge.type === 'affects';
-
-    let color;
-    if (isCritical) {
-      color = 0xa04639;
-    } else if (isAffects) {
-      color = 0x4b5059;
-    } else {
-      color = 0x948978;
-    }
-
+    const color = isCritical ? 0xa04639 : isAffects ? 0x4b5059 : 0x948978;
     let edgeObj;
 
     if (isCritical) {
-      // Thick cylinder mesh for critical path edges
-      const cylGeom = new THREE.CylinderGeometry(0.04, 0.04, 1, 6);
-      const cylMat = new THREE.MeshBasicMaterial({
-        color: color,
-        transparent: true,
-        opacity: 0.85
-      });
-      edgeObj = new THREE.Mesh(cylGeom, cylMat);
-      edgeObj.userData = { fromIdx, toIdx, edge, isCritical, isCylinder: true };
+      const g = new THREE.CylinderGeometry(0.04, 0.04, 1, 6);
+      const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
+      edgeObj = new THREE.Mesh(g, m);
     } else {
-      // Thin line for regular edges
-      const material = new THREE.LineBasicMaterial({
-        color: color,
-        transparent: true,
-        opacity: isAffects ? 0.4 : 0.6
-      });
-      const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(6);
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      edgeObj = new THREE.Line(geometry, material);
-      edgeObj.userData = { fromIdx, toIdx, edge, isCritical, isCylinder: false };
+      const m = new THREE.LineBasicMaterial({ color, transparent: true, opacity: isAffects ? 0.4 : 0.6 });
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      edgeObj = new THREE.Line(g, m);
     }
+    // Default: non-critical edges start faded (critical-path-first view)
+    if (!isCritical) edgeObj.material.opacity = 0.08;
 
+    edgeObj.userData = { fromIdx, toIdx, edge, isCritical, isCylinder: !!isCritical, isAffects };
     edgeGroup.add(edgeObj);
     edgeLines.push(edgeObj);
   });
 
   // ── Lighting ──
-  const ambient = new THREE.AmbientLight(0xffffff, 0.48);
-  scene.add(ambient);
-  const point = new THREE.PointLight(0xffffff, 0.64);
-  point.position.set(10, 10, 10);
-  scene.add(point);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.48));
+  const pointLight = new THREE.PointLight(0xffffff, 0.64);
+  pointLight.position.set(10, 10, 10);
+  scene.add(pointLight);
 
-  // ── Force Simulation ──
-  const REPULSION = 4.0;
-  const ATTRACTION = 0.008;
-  const DAMPING = 0.85;
-  const REST_LENGTH = 3.0;
-  let simulating = true;
+  // ── Force Simulation (only used in force layout mode) ──
+  const REPULSION = 4.0, ATTRACTION = 0.015, DAMPING = 0.85, REST_LENGTH = 2.8;
+  const ORIGIN_PULL = 0.012;
   let simSteps = 0;
   const MAX_SIM_STEPS = 300;
+  const _diff = new THREE.Vector3();
+  const _center = new THREE.Vector3();
+  let autoFrameForce = false;
 
   function simulateForces() {
-    if (!simulating || simSteps > MAX_SIM_STEPS) return;
+    if (layoutMode !== 'force' || simSteps > MAX_SIM_STEPS) return;
     simSteps++;
-
-    // Repulsion between all nodes
     for (let i = 0; i < nodePositions.length; i++) {
       for (let j = i + 1; j < nodePositions.length; j++) {
-        const diff = nodePositions[i].clone().sub(nodePositions[j]);
-        const dist = diff.length() || 0.01;
-        const force = REPULSION / (dist * dist);
-        const f = diff.normalize().multiplyScalar(force);
-        nodeVelocities[i].add(f);
-        nodeVelocities[j].sub(f);
+        _diff.copy(nodePositions[i]).sub(nodePositions[j]);
+        const dist = _diff.length() || 0.01;
+        _diff.normalize().multiplyScalar(REPULSION / (dist * dist));
+        nodeVelocities[i].add(_diff); nodeVelocities[j].sub(_diff);
       }
     }
-
-    // Attraction along edges
-    edges.forEach(edge => {
-      const fi = phases.findIndex(p => p.number === edge.from);
-      const ti = phases.findIndex(p => p.number === edge.to);
-      if (fi < 0 || ti < 0) return;
-
-      const diff = nodePositions[ti].clone().sub(nodePositions[fi]);
-      const dist = diff.length() || 0.01;
-      const force = (dist - REST_LENGTH) * ATTRACTION;
-      const f = diff.normalize().multiplyScalar(force);
-      nodeVelocities[fi].add(f);
-      nodeVelocities[ti].sub(f);
+    edges.forEach(e => {
+      const fi = phaseIdx[e.from], ti = phaseIdx[e.to];
+      if (fi === undefined || ti === undefined) return;
+      _diff.copy(nodePositions[ti]).sub(nodePositions[fi]);
+      const len = _diff.length() || 0.01;
+      _diff.normalize().multiplyScalar((len - REST_LENGTH) * ATTRACTION);
+      nodeVelocities[fi].add(_diff); nodeVelocities[ti].sub(_diff);
     });
-
-    // Center gravity
-    const center = new THREE.Vector3();
-    nodePositions.forEach(p => center.add(p));
-    center.divideScalar(nodePositions.length || 1);
     nodePositions.forEach((p, i) => {
-      const toCenter = center.clone().sub(p).multiplyScalar(0.002);
-      nodeVelocities[i].add(toCenter);
-    });
-
-    // Apply velocities + damping
-    nodePositions.forEach((pos, i) => {
+      _diff.copy(p).multiplyScalar(-ORIGIN_PULL);
+      nodeVelocities[i].add(_diff);
       nodeVelocities[i].multiplyScalar(DAMPING);
-      pos.add(nodeVelocities[i]);
-      nodeMeshes[i].position.copy(pos);
+      p.add(nodeVelocities[i]);
     });
+    // Pin the cloud at the origin so orbit-about-origin framing stays valid.
+    _center.set(0, 0, 0);
+    nodePositions.forEach(p => _center.add(p));
+    _center.divideScalar(nodePositions.length || 1);
+    nodePositions.forEach(p => p.sub(_center));
+    syncPositions();
+    if (autoFrameForce) frameGraph(false);
+  }
 
-    // Update label positions
+  function syncPositions() {
+    nodeMeshes.forEach((m, i) => m.position.copy(nodePositions[i]));
     nodeGroup.children.forEach(child => {
-      if (child.userData && child.userData.isLabel) {
+      if (child.userData?.isLabel) {
         const ni = child.userData.nodeIndex;
-        child.position.set(
-          nodePositions[ni].x,
-          nodePositions[ni].y - nodeRadius - 0.3,
-          nodePositions[ni].z
-        );
+        child.position.set(nodePositions[ni].x, nodePositions[ni].y - nodeRadius - 0.3, nodePositions[ni].z);
       }
     });
-
-    // Update edge positions
+    ringMeshes.forEach(r => {
+      const ni = r.userData.nodeIndex;
+      r.position.copy(nodePositions[ni]);
+    });
     edgeLines.forEach(line => {
       const { fromIdx, toIdx, isCylinder } = line.userData;
-      const pA = nodePositions[fromIdx];
-      const pB = nodePositions[toIdx];
-
+      const pA = nodePositions[fromIdx], pB = nodePositions[toIdx];
       if (isCylinder) {
-        // Position cylinder between two nodes
         const mid = pA.clone().add(pB).multiplyScalar(0.5);
-        const dir = pB.clone().sub(pA);
-        const len = dir.length();
-        line.position.copy(mid);
-        line.scale.set(1, len, 1);
+        const dir = pB.clone().sub(pA); const len = dir.length();
+        line.position.copy(mid); line.scale.set(1, len, 1);
         line.quaternion.setFromUnitVectors(EDGE_AXIS, dir.normalize());
       } else {
-        const posArr = line.geometry.attributes.position.array;
-        posArr[0] = pA.x; posArr[1] = pA.y; posArr[2] = pA.z;
-        posArr[3] = pB.x; posArr[4] = pB.y; posArr[5] = pB.z;
+        const a = line.geometry.attributes.position.array;
+        a[0]=pA.x; a[1]=pA.y; a[2]=pA.z; a[3]=pB.x; a[4]=pB.y; a[5]=pB.z;
         line.geometry.attributes.position.needsUpdate = true;
       }
     });
   }
+  syncPositions();
 
-  // ── Camera Controls (orbit) ──
-  let isDragging = false;
-  let prevMouse = { x: 0, y: 0 };
-  let cameraTheta = 0;
-  let cameraPhi = Math.PI / 2;
-  let cameraRadius = camera.position.length();
+  // ── Camera Controls ──
+  // Orbit angles must match the initial (0, 0, R) placement:
+  //   x = R sin(φ) cos(θ), y = R cos(φ), z = R sin(φ) sin(θ)
+  // θ = 0, φ = π/2 maps to (+R, 0, 0) — edge-on to the DAG row.
+  // θ = π/2, φ = π/2 maps to (0, 0, +R) — face-on, matching the DAG plane.
+  const DEFAULT_THETA = Math.PI / 2;
+  const DEFAULT_PHI = Math.PI / 2;
+  const FIT_PADDING = 1.3;
+  const ZOOM_OUT_FRACTION = 5;
+  let isDragging = false, prevMouse = { x: 0, y: 0 };
+  let cameraTheta = DEFAULT_THETA, cameraPhi = DEFAULT_PHI;
+  let cameraRadius = 8;
 
-  canvas.addEventListener('mousedown', e => {
-    if (e.target.closest('#controls') || e.target.closest('#legend')) return;
-    isDragging = true;
-    prevMouse = { x: e.clientX, y: e.clientY };
-  });
-
-  canvas.addEventListener('mousemove', e => {
-    if (isDragging) {
-      const dx = e.clientX - prevMouse.x;
-      const dy = e.clientY - prevMouse.y;
-      cameraTheta -= dx * 0.005;
-      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi - dy * 0.005));
-      prevMouse = { x: e.clientX, y: e.clientY };
-      updateCameraPosition();
+  function graphBounds() {
+    const box = new THREE.Box3();
+    if (nodePositions.length === 0) {
+      box.expandByPoint(new THREE.Vector3());
     } else {
-      handleHover(e);
+      nodePositions.forEach(p => box.expandByPoint(p));
     }
-  });
+    box.expandByScalar(nodeRadius + 0.45);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const radius = Math.max(size.length() * 0.5, nodeRadius * 4);
+    return { radius, size };
+  }
 
-  canvas.addEventListener('mouseup', () => { isDragging = false; });
-  canvas.addEventListener('mouseleave', () => { isDragging = false; hideTooltip(); });
+  function fitRadius(bounds) {
+    const fov = camera.fov * Math.PI / 180;
+    const aspect = Math.max(camera.aspect || 1, 0.05);
+    const r = bounds.radius;
+    const distY = r / Math.tan(fov / 2);
+    const distX = r / (Math.tan(fov / 2) * aspect);
+    return Math.max(distX, distY, nodeRadius * 12) * FIT_PADDING;
+  }
 
-  canvas.addEventListener('wheel', e => {
-    e.preventDefault();
-    cameraRadius = Math.max(3, Math.min(50, cameraRadius + e.deltaY * 0.01));
+  function zoomLimits() {
+    const bounds = graphBounds();
+    const fit = fitRadius(bounds);
+    // Stay outside the bounding sphere so the camera cannot sit inside a node.
+    const minR = bounds.radius + nodeRadius * 4;
+    const maxR = Math.max(fit * ZOOM_OUT_FRACTION, minR + 1);
+    return { minR, maxR };
+  }
+
+  function frameGraph(resetAngles) {
+    if (resetAngles !== false) {
+      cameraTheta = DEFAULT_THETA;
+      cameraPhi = DEFAULT_PHI;
+    }
+    cameraRadius = fitRadius(graphBounds());
     updateCameraPosition();
-  }, { passive: false });
-
-  canvas.addEventListener('click', e => {
-    if (e.target.closest('#controls') || e.target.closest('#legend')) return;
-    handleClick(e);
-  });
+  }
 
   function updateCameraPosition() {
     camera.position.x = cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
@@ -892,16 +997,46 @@
     camera.lookAt(0, 0, 0);
   }
 
-  // ── Raycasting (hover + click) ──
+  frameGraph(true);
+  cameraReady = true;
+
+  canvas.addEventListener('mousedown', e => {
+    if (e.target.closest('#controls') || e.target.closest('#legend')) return;
+    isDragging = true; prevMouse = { x: e.clientX, y: e.clientY };
+  });
+  canvas.addEventListener('mousemove', e => {
+    if (isDragging) {
+      autoFrameForce = false;
+      cameraTheta -= (e.clientX - prevMouse.x) * 0.005;
+      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi - (e.clientY - prevMouse.y) * 0.005));
+      prevMouse = { x: e.clientX, y: e.clientY };
+      updateCameraPosition();
+    } else { handleHover(e); }
+  });
+  canvas.addEventListener('mouseup', () => { isDragging = false; });
+  canvas.addEventListener('mouseleave', () => { isDragging = false; hideTooltip(); });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    autoFrameForce = false;
+    const { minR, maxR } = zoomLimits();
+    cameraRadius = Math.min(maxR, Math.max(minR, cameraRadius * Math.exp(e.deltaY * 0.001)));
+    updateCameraPosition();
+  }, { passive: false });
+  canvas.addEventListener('click', e => {
+    if (e.target.closest('#controls') || e.target.closest('#legend')) return;
+    handleClick(e);
+  });
+
+  // ── Raycasting ──
   const raycaster = new THREE.Raycaster();
-  const mouse = new THREE.Vector2();
+  const mouseVec = new THREE.Vector2();
   const tooltip = document.getElementById('tooltip');
 
   function getIntersectedNode(event) {
     const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
+    mouseVec.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseVec.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouseVec, camera);
     const hits = raycaster.intersectObjects(nodeMeshes);
     return hits.length > 0 ? hits[0].object : null;
   }
@@ -917,152 +1052,140 @@
       tooltip.style.top = (event.clientY - 8) + 'px';
       tooltip.classList.add('visible');
       document.body.style.cursor = 'pointer';
-
-      // Highlight node
       nodeMeshes.forEach((m, i) => {
-        if (i === node.userData.index) {
-          m.material.emissiveIntensity = 0.7;
-          m.scale.set(1.2, 1.2, 1.2);
-        } else {
-          m.material.emissiveIntensity = 0.3;
-          m.scale.set(1, 1, 1);
-        }
+        m.material.emissiveIntensity = (i === node.userData.index) ? 0.7 : 0.3;
+        const s = (i === node.userData.index) ? 1.2 : 1;
+        m.scale.set(s, s, s);
       });
     } else {
       hideTooltip();
       document.body.style.cursor = 'grab';
-      nodeMeshes.forEach(m => {
-        m.material.emissiveIntensity = 0.3;
-        m.scale.set(1, 1, 1);
-      });
+      nodeMeshes.forEach(m => { m.material.emissiveIntensity = 0.3; m.scale.set(1,1,1); });
     }
   }
-
-  function hideTooltip() {
-    tooltip.classList.remove('visible');
-  }
-
+  function hideTooltip() { tooltip.classList.remove('visible'); }
   function handleClick(event) {
     const node = getIntersectedNode(event);
-    if (node) {
-      showDetailPanel(node.userData.phase);
-    }
+    if (node) showDetailPanel(node.userData.phase);
   }
 
+  // ── Feature 4: Build provides-to-phase color map for equation dependency dots ──
+  const providesMap = {}; // { 'result-label': { phaseNumber, phaseName, color } }
+  phases.forEach(p => {
+    (p.provides || []).forEach(label => {
+      providesMap[label] = { num: p.number, name: p.name, css: STATUS_CSS[p.status] || '#948978' };
+    });
+  });
+
   // ── Detail Panel ──
+  let activeRow = null;
+  let cachedRows = null;
+  function hideDetailPanel() {
+    document.getElementById('detail-panel').classList.remove('active');
+    if (activeRow) { activeRow.classList.remove('active-row'); activeRow = null; }
+  }
+
   function showDetailPanel(phase) {
     const panel = document.getElementById('detail-panel');
     panel.classList.add('active');
-
     document.getElementById('dp-title').textContent = `Phase ${phase.number}: ${phase.name}`;
     document.getElementById('dp-oneliner').textContent = phase.one_liner || '';
+
+    // Highlight active row in sidebar table
+    if (activeRow) activeRow.classList.remove('active-row');
+    if (!cachedRows) cachedRows = document.getElementById('phase-tbody').querySelectorAll('tr');
+    const idx = phaseIdx[phase.number];
+    if (idx !== undefined && cachedRows[idx]) { cachedRows[idx].classList.add('active-row'); activeRow = cachedRows[idx]; }
 
     // Tags
     const tagsContainer = document.getElementById('dp-tags');
     tagsContainer.innerHTML = '';
     (phase.provides || []).forEach(p => {
-      const tag = document.createElement('span');
-      tag.className = 'detail-tag tag-provides';
-      tag.textContent = `provides: ${p}`;
-      tagsContainer.appendChild(tag);
+      const t = document.createElement('span'); t.className = 'detail-tag tag-provides';
+      t.textContent = `provides: ${p}`; tagsContainer.appendChild(t);
     });
     (phase.requires || []).forEach(r => {
-      const tag = document.createElement('span');
-      tag.className = 'detail-tag tag-requires';
-      tag.textContent = `requires: ${r}`;
-      tagsContainer.appendChild(tag);
+      const t = document.createElement('span'); t.className = 'detail-tag tag-requires';
+      t.textContent = `requires: ${r}`; tagsContainer.appendChild(t);
     });
     (phase.affects || []).forEach(a => {
-      const tag = document.createElement('span');
-      tag.className = 'detail-tag tag-affects';
-      tag.textContent = `affects: ${a}`;
-      tagsContainer.appendChild(tag);
+      const t = document.createElement('span'); t.className = 'detail-tag tag-affects';
+      t.textContent = `affects: ${a}`; tagsContainer.appendChild(t);
     });
 
     // Key Results
     const resultsList = document.getElementById('dp-results');
     const resultsSection = document.getElementById('dp-results-section');
     resultsList.innerHTML = '';
-    if (phase.key_results && phase.key_results.length) {
+    if (phase.key_results?.length) {
       resultsSection.style.display = 'block';
       phase.key_results.forEach(r => {
-        const li = document.createElement('li');
-        li.textContent = r;
-        resultsList.appendChild(li);
+        const li = document.createElement('li'); li.textContent = r; resultsList.appendChild(li);
       });
-    } else {
-      resultsSection.style.display = 'none';
-    }
+    } else resultsSection.style.display = 'none';
 
-    // Equations
+    // ── Feature 4: Equation dependency dots ──
     const eqContainer = document.getElementById('dp-equations');
     const eqSection = document.getElementById('dp-equations-section');
     eqContainer.innerHTML = '';
-    if (phase.equations && phase.equations.length) {
+    const reqs = phase.requires || [];
+    if (phase.equations?.length) {
       eqSection.style.display = 'block';
+      // Show dependency dots above equations
+      if (reqs.length) {
+        const dotsDiv = document.createElement('div');
+        dotsDiv.className = 'eq-dep-dots';
+        reqs.forEach(r => {
+          const src = providesMap[r];
+          if (!src) return;
+          const dot = document.createElement('span');
+          dot.className = 'eq-dep-dot';
+          dot.style.setProperty('--dot-color', src.css);
+          dot.style.cssText += `; --dot-color:${src.css}`;
+          dot.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span> P${src.num}: ${r}`;
+          dotsDiv.appendChild(dot);
+        });
+        eqContainer.appendChild(dotsDiv);
+      }
       phase.equations.forEach(eq => {
         const div = document.createElement('div');
-        div.className = 'equation-block';
-        div.textContent = eq;
+        div.className = 'equation-block'; div.textContent = eq;
         eqContainer.appendChild(div);
       });
-      if (window.MathJax && window.MathJax.typesetPromise) {
-        window.MathJax.typesetPromise([eqContainer]);
-      }
-    } else {
-      eqSection.style.display = 'none';
-    }
+      if (window.MathJax?.typesetPromise) window.MathJax.typesetPromise([eqContainer]);
+    } else eqSection.style.display = 'none';
 
     // Verification
     const verContainer = document.getElementById('dp-verification');
     const verSection = document.getElementById('dp-verification-section');
     verContainer.innerHTML = '';
-    if (phase.verification && phase.verification.length) {
+    if (phase.verification?.length) {
       verSection.style.display = 'block';
       phase.verification.forEach(v => {
-        const row = document.createElement('div');
-        row.className = 'verification-row';
+        const row = document.createElement('div'); row.className = 'verification-row';
         const icon = v.passed ? '✓' : (v.warning ? '⚠' : '✗');
         const color = v.passed ? 'var(--status-complete)' : (v.warning ? 'var(--status-warning)' : 'var(--status-failed)');
         row.innerHTML = `<span style="color:${color}">${icon}</span> ${v.name}`;
         verContainer.appendChild(row);
       });
-    } else {
-      verSection.style.display = 'none';
-    }
+    } else verSection.style.display = 'none';
   }
+  document.getElementById('dp-close').addEventListener('click', hideDetailPanel);
 
-  // ── Sidebar: Phase Table ──
+  // ── Sidebar ──
   const tbody = document.getElementById('phase-tbody');
   phases.forEach(phase => {
     const tr = document.createElement('tr');
     const icon = STATUS_ICONS[phase.status] || '·';
-    const statusColor = {
-      complete: 'var(--status-complete)',
-      partial: 'var(--status-partial)',
-      planned: 'var(--status-planned)',
-      empty: 'var(--status-empty)'
-    }[phase.status] || 'var(--text-muted)';
-
-    const plansText = phase.plans_complete !== undefined
-      ? `${phase.plans_complete}/${phase.plans_total}`
-      : '—';
-
-    const pctText = phase.progress !== undefined
-      ? `${phase.progress}%`
-      : '—';
-
-    tr.innerHTML = `
-      <td class="status-icon" style="color:${statusColor}">${icon}</td>
-      <td>P${phase.number}: ${phase.name}</td>
-      <td>${plansText}</td>
-      <td>${pctText}</td>
-    `;
+    const sc = { complete:'var(--status-complete)', partial:'var(--status-partial)',
+      planned:'var(--status-planned)', empty:'var(--status-empty)' }[phase.status] || 'var(--text-muted)';
+    const plans = phase.plans_complete !== undefined ? `${phase.plans_complete}/${phase.plans_total}` : '—';
+    const pctT = phase.progress !== undefined ? `${phase.progress}%` : '—';
+    tr.innerHTML = `<td class="status-icon" style="color:${sc}">${icon}</td><td>P${phase.number}: ${phase.name}</td><td>${plans}</td><td>${pctT}</td>`;
     tr.addEventListener('click', () => showDetailPanel(phase));
     tbody.appendChild(tr);
   });
 
-  // ── Sidebar: Overall Progress ──
   const completed = phases.filter(p => p.status === 'complete').length;
   const total = phases.length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -1070,120 +1193,180 @@
   document.getElementById('progress-pct').textContent = `${pct}%`;
   document.getElementById('progress-fill').style.width = pct + '%';
 
-  // ── Sidebar: Gap Analysis ──
   const gapsContainer = document.getElementById('gaps-container');
-  if (gaps.length === 0) {
-    gapsContainer.innerHTML = '<div class="gap-none">✓ No dependency gaps found.</div>';
-  } else {
-    gaps.forEach(gap => {
-      const sev = gap.severity || 'low';
-      const div = document.createElement('div');
-      div.className = `gap-alert gap-${sev}`;
-      div.textContent = gap.description;
-      gapsContainer.appendChild(div);
-    });
-  }
+  if (gaps.length === 0) gapsContainer.innerHTML = '<div class="gap-none">✓ No dependency gaps found.</div>';
+  else gaps.forEach(gap => {
+    const div = document.createElement('div'); div.className = `gap-alert gap-${gap.severity||'low'}`;
+    div.textContent = gap.description; gapsContainer.appendChild(div);
+  });
 
-  // ── Sidebar: Critical Path ──
   const critContainer = document.getElementById('critical-container');
   if (criticalPath.length > 0) {
-    const pathStr = criticalPath.map(n => `P${n}`).join(' → ');
-    critContainer.innerHTML = `<div style="font-family:monospace;font-size:13px;color:var(--accent)">${pathStr}</div>
+    critContainer.innerHTML = `<div style="font-family:monospace;font-size:13px;color:var(--accent)">${criticalPath.map(n=>`P${n}`).join(' → ')}</div>
       <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">${criticalPath.length} phases on critical path out of ${total} total</div>`;
-  } else {
-    critContainer.innerHTML = '<div style="color:var(--text-secondary);font-size:13px">No sequential dependencies — all phases can run in parallel.</div>';
-  }
+  } else critContainer.innerHTML = '<div style="color:var(--text-secondary);font-size:13px">No sequential dependencies.</div>';
 
+  // ══════════════════════════════════════════════════════════
   // ── Controls ──
-  let criticalHighlight = false;
+  // ══════════════════════════════════════════════════════════
 
-  document.getElementById('btn-reset').addEventListener('click', () => {
-    cameraTheta = 0;
-    cameraPhi = Math.PI / 2;
-    cameraRadius = Math.max(8, phases.length * 1.5);
-    updateCameraPosition();
-  });
+  // ── Feature 1: Critical path as default (starts ON) ──
+  let criticalHighlight = true;
+  document.getElementById('btn-critical').classList.add('active');
+
+  function applyCriticalView() {
+    document.getElementById('btn-critical').classList.toggle('active', criticalHighlight);
+    document.getElementById('hint-text').innerHTML = criticalHighlight
+      ? '<span>⚡</span> Click to show all edges'
+      : '<span>⚡</span> Click to isolate the bottleneck chain';
+    edgeLines.forEach(line => {
+      if (criticalHighlight) {
+        line.material.opacity = line.userData.isCritical ? 0.85 : 0.08;
+      } else {
+        line.material.opacity = line.userData.isAffects ? 0.4 : 0.6;
+      }
+    });
+    nodeMeshes.forEach((m, i) => {
+      const onCritPath = criticalPhaseSet.has(phases[i].number);
+      if (criticalHighlight) {
+        m.material.opacity = onCritPath ? 1.0 : 0.25;
+        m.material.emissiveIntensity = onCritPath ? 0.5 : 0.2;
+      } else {
+        m.material.opacity = 0.9;
+        m.material.emissiveIntensity = 0.3;
+      }
+    });
+  }
+  applyCriticalView(); // apply on load
 
   document.getElementById('btn-critical').addEventListener('click', () => {
     criticalHighlight = !criticalHighlight;
-    document.getElementById('btn-critical').classList.toggle('active', criticalHighlight);
-
-    edgeLines.forEach(line => {
-      if (criticalHighlight) {
-        line.material.opacity = line.userData.isCritical ? 0.9 : 0.1;
-      } else {
-        line.material.opacity = line.userData.edge.type === 'affects' ? 0.4 : 0.6;
-      }
-    });
-
-    const criticalPhaseNumbers = new Set(criticalPath);
-    nodeMeshes.forEach((m, i) => {
-      if (criticalHighlight) {
-        m.material.opacity = criticalPhaseNumbers.has(phases[i].number) ? 1.0 : 0.2;
-      } else {
-        m.material.opacity = 0.9;
-      }
-    });
+    applyCriticalView();
   });
 
+  // ── Feature 2: DAG / Force layout toggle ──
+  document.getElementById('btn-layout').addEventListener('click', () => {
+    layoutMode = layoutMode === 'dag' ? 'force' : 'dag';
+    document.getElementById('btn-layout').classList.toggle('active', layoutMode === 'force');
+
+    if (layoutMode === 'dag') {
+      phases.forEach((_, i) => {
+        nodePositions[i].copy(dagPosition(i));
+        nodeVelocities[i].set(0, 0, 0);
+      });
+      autoFrameForce = false;
+      syncPositions();
+      frameGraph(true);
+    } else {
+      nodePositions.forEach(p => {
+        p.x += (Math.random() - 0.5) * 0.3;
+        p.y += (Math.random() - 0.5) * 2;
+        p.z += (Math.random() - 0.5) * 2;
+      });
+      simSteps = 0;
+      autoFrameForce = true;
+      syncPositions();
+      frameGraph(true);
+    }
+  });
+
+  // ── Feature 5: Convention toggle (V key) — hidden / visible / solo ──
+  let conventionMode = 0; // 0=hidden, 1=visible, 2=solo
+  const conventionLabels = ['hidden', 'visible', 'solo'];
+
+  function applyConventionMode() {
+    const btn = document.getElementById('btn-conventions');
+    const badge = document.getElementById('convention-badge');
+    btn.classList.toggle('active', conventionMode > 0);
+    btn.title = `Conventions: ${conventionLabels[conventionMode]} (V)`;
+    if (conventionMode > 0) {
+      badge.textContent = `conventions: ${conventionLabels[conventionMode]}`;
+      badge.style.display = 'block';
+    } else {
+      badge.style.display = 'none';
+    }
+
+    edgeLines.forEach(line => {
+      const { isAffects, isCritical } = line.userData;
+      if (conventionMode === 2) {
+        // Solo: only show affects edges
+        line.material.opacity = isAffects ? 0.8 : 0.03;
+      } else if (conventionMode === 1) {
+        // Visible: show affects at medium + keep current view
+        if (isAffects) line.material.opacity = 0.6;
+        else if (criticalHighlight) line.material.opacity = isCritical ? 0.85 : 0.08;
+        else line.material.opacity = 0.6;
+      } else {
+        // Hidden: back to default
+        applyCriticalView();
+      }
+    });
+  }
+
+  document.getElementById('btn-conventions').addEventListener('click', () => {
+    conventionMode = (conventionMode + 1) % 3;
+    applyConventionMode();
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') hideDetailPanel();
+    if (e.key === 'v' || e.key === 'V') {
+      conventionMode = (conventionMode + 1) % 3;
+      applyConventionMode();
+    }
+  });
+
+  // ── Theme ──
   document.getElementById('btn-theme').addEventListener('click', () => {
     const current = document.documentElement.getAttribute('data-theme');
     document.documentElement.setAttribute('data-theme', current === 'light' ? '' : 'light');
-    // Update scene background
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
     renderer.setClearColor(isLight ? 0xf0ebe3 : 0x212832, 1);
-    // Update label colors
     nodeGroup.children.forEach(child => {
-      if (child.userData && child.userData.isLabel) {
-        const labelCanvas = document.createElement('canvas');
-        const ctx = labelCanvas.getContext('2d');
-        labelCanvas.width = 256;
-        labelCanvas.height = 64;
-        ctx.font = 'bold 28px -apple-system, sans-serif';
-        ctx.fillStyle = isLight ? '#1a2028' : '#ede8e2';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const ni = child.userData.nodeIndex;
-        ctx.fillText(`P${phases[ni].number}`, 128, 32);
-        child.material.map = new THREE.CanvasTexture(labelCanvas);
-        child.material.needsUpdate = true;
+      if (child.userData?.isLabel) {
+        const lc = document.createElement('canvas'); const lx = lc.getContext('2d');
+        lc.width = 256; lc.height = 64;
+        lx.font = 'bold 28px -apple-system, sans-serif';
+        lx.fillStyle = isLight ? '#1a2028' : '#ede8e2';
+        lx.textAlign = 'center'; lx.textBaseline = 'middle';
+        lx.fillText(`P${phases[child.userData.nodeIndex].number}`, 128, 32);
+        child.material.map = new THREE.CanvasTexture(lc); child.material.needsUpdate = true;
       }
     });
   });
 
+  // ── Reset ──
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    autoFrameForce = layoutMode === 'force' && simSteps <= MAX_SIM_STEPS;
+    frameGraph(true);
+  });
+
+  // ── Sidebar toggle + resize ──
   document.getElementById('btn-sidebar').addEventListener('click', () => {
     document.getElementById('sidebar').classList.toggle('collapsed');
     updateRendererSize();
   });
 
-  // ── Sidebar Resize ──
   const sidebar = document.getElementById('sidebar');
   const resizeHandle = document.getElementById('sidebar-resize');
-
   resizeHandle.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     document.body.classList.add('sidebar-resizing');
-
     function onMove(ev) {
       sidebar.style.width = Math.max(240, Math.min(700, window.innerWidth - ev.clientX)) + 'px';
     }
-
     function onUp() {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.classList.remove('sidebar-resizing');
       updateRendererSize();
     }
-
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
 
-  // ── Set initial clear color ──
+  // ── Render ──
   renderer.setClearColor(0x212832, 1);
-
-  // ── Render Loop ──
   function animate() {
     requestAnimationFrame(animate);
     simulateForces();

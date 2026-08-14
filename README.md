@@ -28,7 +28,8 @@ contribution/
 ├── patches/
 │   └── export-workflow-addition.md          # Detailed instructions for modifying export.md
 └── tests/
-    └── test_interactive_export.py           # 28 tests (26 pass, 2 skipped pending workflow update)
+    ├── test_interactive_export.py           # template/structure tests (2 skipped pending workflow update)
+    └── test_camera_layout.py                # force-layout / camera framing invariants
 ```
 
 ## How to Submit
@@ -98,7 +99,7 @@ graph and research progress dashboard.
 - New template: \`src/gpd/specs/templates/interactive-export.html\`
 - Updated workflow: \`src/gpd/specs/workflows/export.md\` (new \`generate_interactive\` step)
 - Updated command: \`src/gpd/commands/export.md\` (interactive option in format table)
-- New tests: \`tests/test_interactive_export.py\` (28 tests)
+- New tests: \`tests/test_interactive_export.py\`, \`tests/test_camera_layout.py\`
 
 ## vNEXT
 - Added \`--format interactive\` export: standalone HTML with Three.js 3D dependency graph, 
