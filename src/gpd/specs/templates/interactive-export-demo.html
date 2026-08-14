@@ -1136,15 +1136,15 @@
   // ── Force Simulation (only used in force layout mode) ──
   const REPULSION = 4.0, ATTRACTION = 0.015, DAMPING = 0.85, REST_LENGTH = 2.8;
   const ORIGIN_PULL = 0.012;
+  const MAX_NODE_R = Math.max(6, phases.length * 1.2);
   let simSteps = 0;
   const MAX_SIM_STEPS = 300;
+  const STEPS_PER_FRAME = 4;
   const _diff = new THREE.Vector3();
   const _center = new THREE.Vector3();
   let autoFrameForce = false;
 
-  function simulateForces() {
-    if (layoutMode !== 'force' || simSteps > MAX_SIM_STEPS) return;
-    simSteps++;
+  function simulateStep() {
     for (let i = 0; i < nodePositions.length; i++) {
       for (let j = i + 1; j < nodePositions.length; j++) {
         _diff.copy(nodePositions[i]).sub(nodePositions[j]);
@@ -1167,11 +1167,28 @@
       nodeVelocities[i].multiplyScalar(DAMPING);
       p.add(nodeVelocities[i]);
     });
-    // Pin the cloud at the origin so orbit-about-origin framing stays valid.
     _center.set(0, 0, 0);
     nodePositions.forEach(p => _center.add(p));
     _center.divideScalar(nodePositions.length || 1);
     nodePositions.forEach(p => p.sub(_center));
+    nodePositions.forEach(p => {
+      const d = p.length();
+      if (d > MAX_NODE_R) p.multiplyScalar(MAX_NODE_R / d);
+    });
+    _center.set(0, 0, 0);
+    nodePositions.forEach(p => _center.add(p));
+    _center.divideScalar(nodePositions.length || 1);
+    nodePositions.forEach(p => p.sub(_center));
+  }
+
+  function simulateForces() {
+    if (layoutMode !== 'force' || simSteps > MAX_SIM_STEPS) return;
+    const budget = Math.min(STEPS_PER_FRAME, MAX_SIM_STEPS - simSteps + 1);
+    for (let s = 0; s < budget; s++) {
+      if (simSteps > MAX_SIM_STEPS) break;
+      simSteps++;
+      simulateStep();
+    }
     syncPositions();
     if (autoFrameForce) frameGraph(false);
   }
@@ -1212,11 +1229,13 @@
   // θ = π/2, φ = π/2 maps to (0, 0, +R) — face-on, matching the DAG plane.
   const DEFAULT_THETA = Math.PI / 2;
   const DEFAULT_PHI = Math.PI / 2;
-  const FIT_PADDING = 1.3;
+  const FIT_PADDING = 1.2;
   const ZOOM_OUT_FRACTION = 5;
+  const ZOOM_CLEARANCE = nodeRadius * 3;
   let isDragging = false, prevMouse = { x: 0, y: 0 };
   let cameraTheta = DEFAULT_THETA, cameraPhi = DEFAULT_PHI;
   let cameraRadius = 8;
+  const cameraTarget = new THREE.Vector3();
 
   function graphBounds() {
     const box = new THREE.Box3();
@@ -1225,45 +1244,73 @@
     } else {
       nodePositions.forEach(p => box.expandByPoint(p));
     }
-    box.expandByScalar(nodeRadius + 0.45);
+    box.expandByScalar(Math.max(nodeRadius, 0.6)); // spheres + label sprites
+    box.min.y -= 0.5; // label sprites sit below the spheres
+    const center = new THREE.Vector3();
     const size = new THREE.Vector3();
+    box.getCenter(center);
     box.getSize(size);
-    const radius = Math.max(size.length() * 0.5, nodeRadius * 4);
-    return { radius, size };
+    return { center, size };
   }
 
   function fitRadius(bounds) {
     const fov = camera.fov * Math.PI / 180;
     const aspect = Math.max(camera.aspect || 1, 0.05);
-    const r = bounds.radius;
-    const distY = r / Math.tan(fov / 2);
-    const distX = r / (Math.tan(fov / 2) * aspect);
-    return Math.max(distX, distY, nodeRadius * 12) * FIT_PADDING;
+    const halfW = Math.max(bounds.size.x / 2, nodeRadius);
+    const halfH = Math.max(bounds.size.y / 2, nodeRadius);
+    const halfD = Math.max(bounds.size.z / 2, nodeRadius);
+    const distY = halfH / Math.tan(fov / 2);
+    const distX = halfW / (Math.tan(fov / 2) * aspect);
+    // Sphere distance keeps near-camera nodes in a 3D cloud inside the frustum.
+    const sphereR = Math.hypot(halfW, halfH, halfD);
+    const distSphere = sphereR / Math.tan(fov / 2);
+    const dist = layoutMode === 'force'
+      ? Math.max(distX, distY, distSphere)
+      : Math.max(distX, distY, halfD + nodeRadius * 6);
+    return Math.max(dist, nodeRadius * 12) * (layoutMode === 'force' ? FIT_PADDING + 0.15 : FIT_PADDING);
+  }
+
+  function minRadiusForView() {
+    const dir = new THREE.Vector3(
+      Math.sin(cameraPhi) * Math.cos(cameraTheta),
+      Math.cos(cameraPhi),
+      Math.sin(cameraPhi) * Math.sin(cameraTheta)
+    );
+    let minR = nodeRadius * 8;
+    nodePositions.forEach(p => {
+      _diff.copy(p).sub(cameraTarget);
+      const along = _diff.dot(dir);
+      const perp = Math.sqrt(Math.max(0, _diff.lengthSq() - along * along));
+      if (perp >= ZOOM_CLEARANCE) return;
+      const need = Math.sqrt(ZOOM_CLEARANCE * ZOOM_CLEARANCE - perp * perp);
+      minR = Math.max(minR, along + need);
+    });
+    return minR;
   }
 
   function zoomLimits() {
-    const bounds = graphBounds();
-    const fit = fitRadius(bounds);
-    // Stay outside the bounding sphere so the camera cannot sit inside a node.
-    const minR = bounds.radius + nodeRadius * 4;
+    const fit = fitRadius(graphBounds());
+    const minR = minRadiusForView();
     const maxR = Math.max(fit * ZOOM_OUT_FRACTION, minR + 1);
     return { minR, maxR };
   }
 
   function frameGraph(resetAngles) {
+    const bounds = graphBounds();
+    cameraTarget.copy(bounds.center);
     if (resetAngles !== false) {
       cameraTheta = DEFAULT_THETA;
       cameraPhi = DEFAULT_PHI;
     }
-    cameraRadius = fitRadius(graphBounds());
+    cameraRadius = fitRadius(bounds);
     updateCameraPosition();
   }
 
   function updateCameraPosition() {
-    camera.position.x = cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
-    camera.position.y = cameraRadius * Math.cos(cameraPhi);
-    camera.position.z = cameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
-    camera.lookAt(0, 0, 0);
+    camera.position.x = cameraTarget.x + cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+    camera.position.y = cameraTarget.y + cameraRadius * Math.cos(cameraPhi);
+    camera.position.z = cameraTarget.z + cameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+    camera.lookAt(cameraTarget);
   }
 
   frameGraph(true);

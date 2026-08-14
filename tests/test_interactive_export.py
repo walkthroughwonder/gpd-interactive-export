@@ -168,8 +168,9 @@ class TestCameraFraming:
     def test_layout_switch_reframes(self, template_content):
         assert template_content.count("frameGraph(true)") >= 3
 
-    def test_zoom_stays_outside_bounding_sphere(self, template_content):
-        assert "bounds.radius + nodeRadius" in template_content
+    def test_zoom_stays_outside_nodes(self, template_content):
+        assert "function minRadiusForView" in template_content
+        assert "ZOOM_CLEARANCE" in template_content
         assert "Math.max(3, Math.min(50, cameraRadius + e.deltaY" not in template_content
 
 

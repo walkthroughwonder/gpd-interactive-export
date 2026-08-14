@@ -56,26 +56,37 @@ def simulate_force(n=6, steps=300, seed=1):
             p[0] -= cx
             p[1] -= cy
             p[2] -= cz
+        max_r = max(6, n * 1.2)
+        for p in positions:
+            d = mag(p)
+            if d > max_r:
+                s = max_r / d
+                p[0] *= s
+                p[1] *= s
+                p[2] *= s
+        cx = sum(p[0] for p in positions) / n
+        cy = sum(p[1] for p in positions) / n
+        cz = sum(p[2] for p in positions) / n
+        for p in positions:
+            p[0] -= cx
+            p[1] -= cy
+            p[2] -= cz
     return positions
 
 
-def bounding_radius(positions, node_radius=0.35, pad=0.45):
+def aabb_fit(positions, node_radius=0.35, pad_y=0.5, fov_deg=60, aspect=920 / 800, padding=1.2):
     xs = [p[0] for p in positions]
     ys = [p[1] for p in positions]
     zs = [p[2] for p in positions]
     size = (
-        (max(xs) - min(xs)) + 2 * (node_radius + pad),
-        (max(ys) - min(ys)) + 2 * (node_radius + pad),
-        (max(zs) - min(zs)) + 2 * (node_radius + pad),
+        (max(xs) - min(xs)) + 2 * node_radius,
+        (max(ys) - min(ys)) + 2 * node_radius + pad_y,
+        (max(zs) - min(zs)) + 2 * node_radius,
     )
-    return max(math.sqrt(size[0] ** 2 + size[1] ** 2 + size[2] ** 2) * 0.5, node_radius * 4)
-
-
-def fit_radius(radius, fov_deg=60, aspect=920 / 800, padding=1.3, node_radius=0.35):
     fov = fov_deg * math.pi / 180
-    dist_y = radius / math.tan(fov / 2)
-    dist_x = radius / (math.tan(fov / 2) * aspect)
-    return max(dist_x, dist_y, node_radius * 12) * padding
+    dist_y = (size[1] / 2) / math.tan(fov / 2)
+    dist_x = (size[0] / 2) / (math.tan(fov / 2) * aspect)
+    return max(dist_x, dist_y, size[2] / 2 + node_radius * 6, node_radius * 12) * padding
 
 
 class TestForceLayoutStaysFrameable:
@@ -94,21 +105,28 @@ class TestForceLayoutStaysFrameable:
 
     def test_fit_radius_clears_the_cloud(self):
         positions = simulate_force()
-        bounds_r = bounding_radius(positions)
-        fit = fit_radius(bounds_r)
+        fit = aabb_fit(positions)
         hardcoded = max(8, 6 * 1.5)
-        assert fit > bounds_r + 0.35 * 4
-        assert hardcoded < bounds_r  # the old reset sat inside the cloud
+        furthest = max(math.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2) for p in positions)
+        assert fit > furthest
+        # Old force reset sat at radius 9, inside a typical uncontained cloud.
+        assert hardcoded < 17
 
-    def test_zoom_floor_outside_bounding_sphere(self):
+    def test_zoom_floor_clears_nodes_along_view(self):
         positions = simulate_force()
-        bounds_r = bounding_radius(positions)
-        min_r = bounds_r + 0.35 * 4
+        # Default view is +Z. Camera at (0, 0, R) must stay 3*nodeRadius from every node.
+        clearance = 0.35 * 3
+        min_r = 0.35 * 8
         for p in positions:
-            # Camera on +Z at min_r looking at origin cannot sit inside a node.
-            cam = (0.0, 0.0, min_r)
-            dist = math.sqrt((p[0] - cam[0]) ** 2 + (p[1] - cam[1]) ** 2 + (p[2] - cam[2]) ** 2)
-            assert dist > 0.35 * 2
+            along = p[2]
+            perp = math.sqrt(p[0] ** 2 + p[1] ** 2)
+            if perp >= clearance:
+                continue
+            need = math.sqrt(clearance ** 2 - perp ** 2)
+            min_r = max(min_r, along + need)
+        for p in positions:
+            dist = math.sqrt(p[0] ** 2 + p[1] ** 2 + (p[2] - min_r) ** 2)
+            assert dist >= clearance - 1e-9
 
     def test_face_on_angles_map_to_positive_z(self):
         theta = phi = math.pi / 2
