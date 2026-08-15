@@ -134,8 +134,44 @@ class TestTemplateStructure:
     def test_has_critical_path_toggle(self, template_content):
         assert 'btn-critical' in template_content
 
+    def test_has_layout_toggle(self, template_content):
+        assert 'btn-layout' in template_content
+
+    def test_has_detail_panel_dismiss(self, template_content):
+        assert 'id="dp-close"' in template_content
+        assert "hideDetailPanel" in template_content
+
     def test_has_gpd_attribution(self, template_content):
         assert "Get Physics Done" in template_content
+
+
+class TestCameraFraming:
+    """Reset/layout/zoom must frame the actual graph, not a hardcoded radius."""
+
+    def test_frames_from_node_bounds(self, template_content):
+        assert "function frameGraph" in template_content
+        assert "function graphBounds" in template_content
+        assert "function fitRadius" in template_content
+        assert "function zoomLimits" in template_content
+
+    def test_no_hardcoded_force_reset_radius(self, template_content):
+        assert "phases.length * 1.5" not in template_content
+
+    def test_orbit_angles_match_face_on_dag(self, template_content):
+        assert "DEFAULT_THETA = Math.PI / 2" in template_content
+        assert "cameraTheta = 0" not in template_content
+
+    def test_force_cloud_pinned_at_origin(self, template_content):
+        assert "ORIGIN_PULL" in template_content
+        assert "p.sub(_center)" in template_content
+
+    def test_layout_switch_reframes(self, template_content):
+        assert template_content.count("frameGraph(true)") >= 3
+
+    def test_zoom_stays_outside_nodes(self, template_content):
+        assert "function minRadiusForView" in template_content
+        assert "ZOOM_CLEARANCE" in template_content
+        assert "Math.max(3, Math.min(50, cameraRadius + e.deltaY" not in template_content
 
 
 class TestStatusPalette:
@@ -291,6 +327,41 @@ class TestRendering:
         # (lowercase CSS vars like var(--text-primary) are fine)
         remaining = re.findall(r"\{[A-Z][A-Z_]+\}", rendered)
         assert not remaining, f"Unresolved placeholders: {remaining}"
+
+
+class TestShippedCopies:
+    """Keep the GitHub Pages demo, demo/, and template in lockstep."""
+
+    INDEX_PATH = REPO_ROOT / "index.html"
+    DEMO_PATH = REPO_ROOT / "demo" / "index.html"
+    DEMO_TEMPLATE_PATH = (
+        REPO_ROOT / "src" / "gpd" / "specs" / "templates" / "interactive-export-demo.html"
+    )
+
+    def test_index_matches_demo_copy(self):
+        assert self.INDEX_PATH.read_text(encoding="utf-8") == self.DEMO_PATH.read_text(
+            encoding="utf-8"
+        )
+
+    def test_index_matches_demo_template(self):
+        assert self.INDEX_PATH.read_text(encoding="utf-8") == self.DEMO_TEMPLATE_PATH.read_text(
+            encoding="utf-8"
+        )
+
+    def test_template_round_trip_reproduces_index(self, template_content):
+        index = self.INDEX_PATH.read_text(encoding="utf-8")
+        match = re.search(
+            r'<script id="gpd-data" type="application/json">\s*(.*?)\s*</script>',
+            index,
+            re.DOTALL,
+        )
+        assert match, "Could not find gpd-data in index.html"
+        title_match = re.search(r"<title>(.*?) — Interactive Research Map</title>", index)
+        assert title_match
+        rendered = template_content.replace(
+            "{GPD_PROJECT_DATA}", match.group(1).strip()
+        ).replace("{project_title}", title_match.group(1))
+        assert rendered == index
 
 
 # ── Export Workflow Integration Tests ──
